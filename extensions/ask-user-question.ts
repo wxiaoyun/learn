@@ -1,12 +1,14 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { getMarkdownTheme, keyHint, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
+	Container,
 	Editor,
 	type EditorTheme,
 	Key,
+	Markdown,
 	Text,
 	matchesKey,
 	truncateToWidth,
-	wrapTextWithAnsi,
+	visibleWidth,
 } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 
@@ -117,11 +119,30 @@ function createEditorTheme(theme: any): EditorTheme {
 	};
 }
 
-function addWrapped(lines: string[], text: string, width: number, indent = ""): void {
-	const contentWidth = Math.max(1, width - indent.length);
-	for (const line of wrapTextWithAnsi(text, contentWidth)) {
-		lines.push(truncateToWidth(`${indent}${line}`, width));
+function createMarkdown(text: string, theme: any, color: () => string): Markdown {
+	return new Markdown(
+		text,
+		0,
+		0,
+		getMarkdownTheme(),
+		{ color: (value) => theme.fg(color(), value) },
+		{ preserveBackslashEscapes: true },
+	);
+}
+
+function addMarkdown(lines: string[], markdown: Markdown, width: number, prefix = ""): void {
+	if (width <= 0) return;
+	const safePrefix = truncateToWidth(prefix, Math.max(0, width - 1), "");
+	const prefixWidth = visibleWidth(safePrefix);
+	const contentWidth = width - prefixWidth;
+	const continuation = " ".repeat(prefixWidth);
+	for (const [index, line] of markdown.render(contentWidth).entries()) {
+		lines.push(`${index === 0 ? safePrefix : continuation}${line}`);
 	}
+}
+
+function invalidateMarkdown(markdown: Array<Markdown | undefined>): void {
+	for (const component of markdown) component?.invalidate();
 }
 
 function formatAnswerForModel(answer: AskAnswer): string {
@@ -200,6 +221,60 @@ function buildResult(question: string, context: string | undefined, mode: AskUse
 	};
 }
 
+async function askText(ctx: any, question: string, context: string | undefined): Promise<string | null> {
+	return ctx.ui.custom<string | null>(
+		(tui: any, theme: any, keybindings: any, done: (result: string | null) => void) => {
+			const editor = new Editor(tui, createEditorTheme(theme));
+			const questionMarkdown = createMarkdown(question, theme, () => "text");
+			const contextMarkdown = context ? createMarkdown(context, theme, () => "muted") : undefined;
+
+			editor.onSubmit = done;
+
+			return {
+				get focused() {
+					return editor.focused;
+				},
+				set focused(value: boolean) {
+					editor.focused = value;
+				},
+				render(width: number): string[] {
+					const lines: string[] = [theme.fg("accent", "─".repeat(width))];
+					addMarkdown(lines, questionMarkdown, width, " ");
+					if (contextMarkdown) {
+						lines.push("");
+						addMarkdown(lines, contextMarkdown, width, " ");
+					}
+					lines.push("");
+					for (const line of editor.render(Math.max(1, width - 2))) {
+						lines.push(truncateToWidth(` ${line}`, width));
+					}
+					lines.push("");
+					const hints = [
+						keyHint("tui.select.confirm", "submit"),
+						keyHint("tui.input.newLine", "newline"),
+						keyHint("tui.select.cancel", "cancel"),
+					].join("  ");
+					lines.push(truncateToWidth(theme.fg("dim", ` ${hints}`), width));
+					lines.push(theme.fg("accent", "─".repeat(width)));
+					return lines;
+				},
+				invalidate() {
+					invalidateMarkdown([questionMarkdown, contextMarkdown]);
+					editor.invalidate();
+				},
+				handleInput(data: string) {
+					if (keybindings.matches(data, "tui.select.cancel")) {
+						done(null);
+						return;
+					}
+					editor.handleInput(data);
+					tui.requestRender();
+				},
+			};
+		},
+	);
+}
+
 async function askSingleChoice(
 	ctx: any,
 	question: string,
@@ -218,6 +293,14 @@ async function askSingleChoice(
 		let cachedLines: string[] | undefined;
 		let cachedWidth = -1;
 		const editor = new Editor(tui, createEditorTheme(theme));
+		const questionMarkdown = createMarkdown(question, theme, () => "text");
+		const contextMarkdown = context ? createMarkdown(context, theme, () => "muted") : undefined;
+		const optionMarkdown = allOptions.map((option, index) =>
+			createMarkdown(option.label, theme, () => (index === optionIndex ? "accent" : "text")),
+		);
+		const descriptionMarkdown = allOptions.map((option) =>
+			option.description ? createMarkdown(option.description, theme, () => "muted") : undefined,
+		);
 
 		editor.onSubmit = (value) => {
 			const trimmed = value.trim();
@@ -227,6 +310,7 @@ async function askSingleChoice(
 
 		function refresh() {
 			cachedLines = undefined;
+			invalidateMarkdown(optionMarkdown);
 			tui.requestRender();
 		}
 
@@ -285,22 +369,22 @@ async function askSingleChoice(
 			const add = (text: string) => lines.push(truncateToWidth(text, width));
 
 			add(theme.fg("accent", "─".repeat(width)));
-			addWrapped(lines, theme.fg("text", ` ${question}`), width);
-			if (context) {
+			addMarkdown(lines, questionMarkdown, width, " ");
+			if (contextMarkdown) {
 				lines.push("");
-				addWrapped(lines, theme.fg("muted", ` ${context}`), width);
+				addMarkdown(lines, contextMarkdown, width, " ");
 			}
 			lines.push("");
 
 			for (let i = 0; i < allOptions.length; i++) {
 				const option = allOptions[i];
 				const selected = i === optionIndex;
-				const prefix = selected ? theme.fg("accent", "> ") : "  ";
-				const label = option.isOther ? option.label : `${option.index}. ${option.label}`;
-				const styled = selected ? theme.fg("accent", label) : theme.fg("text", label);
-				add(`${prefix}${styled}`);
-				if (option.description) {
-					addWrapped(lines, theme.fg("muted", option.description), width, "     ");
+				const cursor = selected ? theme.fg("accent", "> ") : "  ";
+				const number = option.isOther ? "" : `${option.index}. `;
+				const prefix = cursor + (selected ? theme.fg("accent", number) : theme.fg("text", number));
+				addMarkdown(lines, optionMarkdown[i], width, prefix);
+				if (descriptionMarkdown[i]) {
+					addMarkdown(lines, descriptionMarkdown[i]!, width, "     ");
 				}
 			}
 
@@ -327,6 +411,8 @@ async function askSingleChoice(
 			render,
 			invalidate: () => {
 				cachedLines = undefined;
+				invalidateMarkdown([questionMarkdown, contextMarkdown, ...optionMarkdown, ...descriptionMarkdown]);
+				editor.invalidate();
 			},
 			handleInput,
 		};
@@ -359,6 +445,20 @@ async function askMultiChoice(
 		let cachedWidth = -1;
 		const selected = new Map<string, AskAnswer>();
 		const editor = new Editor(tui, createEditorTheme(theme));
+		const questionMarkdown = createMarkdown(question, theme, () => "text");
+		const contextMarkdown = context ? createMarkdown(context, theme, () => "muted") : undefined;
+		const optionMarkdown = choiceItems.map((item, index) =>
+			createMarkdown(item.label, theme, () =>
+				index === optionIndex ? "accent" : selected.has(item.id) ? "success" : "text",
+			),
+		);
+		const descriptionMarkdown = choiceItems.map((item) =>
+			item.description ? createMarkdown(item.description, theme, () => "muted") : undefined,
+		);
+		let otherText = otherLabel;
+		const otherMarkdown = createMarkdown(otherText, theme, () =>
+			optionIndex === choiceItems.length ? "accent" : selected.has("other") ? "success" : "text",
+		);
 
 		editor.onSubmit = (value) => {
 			const trimmed = value.trim();
@@ -370,6 +470,12 @@ async function askMultiChoice(
 
 		function refresh() {
 			cachedLines = undefined;
+			const nextOtherText = selected.has("other") ? `${otherLabel}: ${selected.get("other")!.label}` : otherLabel;
+			if (nextOtherText !== otherText) {
+				otherText = nextOtherText;
+				otherMarkdown.setText(otherText);
+			}
+			invalidateMarkdown([...optionMarkdown, otherMarkdown]);
 			tui.requestRender();
 		}
 
@@ -462,10 +568,10 @@ async function askMultiChoice(
 			const add = (text: string) => lines.push(truncateToWidth(text, width));
 
 			add(theme.fg("accent", "─".repeat(width)));
-			addWrapped(lines, theme.fg("text", ` ${question}`), width);
-			if (context) {
+			addMarkdown(lines, questionMarkdown, width, " ");
+			if (contextMarkdown) {
 				lines.push("");
-				addWrapped(lines, theme.fg("muted", ` ${context}`), width);
+				addMarkdown(lines, contextMarkdown, width, " ");
 			}
 			lines.push("");
 
@@ -484,25 +590,18 @@ async function askMultiChoice(
 				}
 
 				if (item.isOther) {
-					const other = selected.get("other");
-					const marker = other ? "[x]" : "[ ]";
-					const suffix = other ? ` — ${other.label}` : "";
-					const styled = isFocused
-						? theme.fg("accent", `${marker} ${item.label}${suffix}`)
-						: theme.fg(other ? "success" : "text", `${marker} ${item.label}${suffix}`);
-					add(`${prefix}${styled}`);
+					const marker = selected.has("other") ? "[x] " : "[ ] ";
+					const markerColor = isFocused ? "accent" : selected.has("other") ? "success" : "text";
+					addMarkdown(lines, otherMarkdown, width, prefix + theme.fg(markerColor, marker));
 					continue;
 				}
 
 				const checked = selected.has(item.id);
-				const marker = checked ? "[x]" : "[ ]";
-				const label = `${marker} ${item.index}. ${item.label}`;
-				const styled = isFocused
-					? theme.fg("accent", label)
-					: theme.fg(checked ? "success" : "text", label);
-				add(`${prefix}${styled}`);
-				if (item.description) {
-					addWrapped(lines, theme.fg("muted", item.description), width, "     ");
+				const marker = `${checked ? "[x]" : "[ ]"} ${item.index}. `;
+				const markerColor = isFocused ? "accent" : checked ? "success" : "text";
+				addMarkdown(lines, optionMarkdown[i], width, prefix + theme.fg(markerColor, marker));
+				if (descriptionMarkdown[i]) {
+					addMarkdown(lines, descriptionMarkdown[i]!, width, "     ");
 				}
 			}
 
@@ -532,6 +631,14 @@ async function askMultiChoice(
 			render,
 			invalidate: () => {
 				cachedLines = undefined;
+				invalidateMarkdown([
+					questionMarkdown,
+					contextMarkdown,
+					...optionMarkdown,
+					...descriptionMarkdown,
+					otherMarkdown,
+				]);
+				editor.invalidate();
 			},
 			handleInput,
 		};
@@ -593,15 +700,14 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 				return cancelledResult(params.question, mode, context);
 			}
 
-			if (!ctx.hasUI) {
+			if (ctx.mode !== "tui") {
 				return unavailableResult(params.question, mode, "ask_user_question requires interactive mode UI", context);
 			}
 
 			return withUILock(async () => {
 				if (mode === "text") {
-					const editorTitle = context ? `${params.question}\n\n${context}` : params.question;
-					const answer = await ctx.ui.editor(editorTitle);
-					if (answer === undefined) {
+					const answer = await askText(ctx, params.question, context);
+					if (answer === null) {
 						return cancelledResult(params.question, mode, context);
 					}
 					return buildResult(params.question, context, mode, [
@@ -627,15 +733,21 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 
 		renderCall(args, theme) {
 			const options = normalizeOptions(args.options as Array<{ label: string; value?: string; description?: string }> | undefined);
-			let text = theme.fg("toolTitle", theme.bold("ask_user_question ")) + theme.fg("muted", args.question);
-			if (args.multiSelect) {
-				text += theme.fg("dim", " [multi-select]");
+			const container = new Container();
+			const mode = args.multiSelect ? theme.fg("dim", " [multi-select]") : "";
+			container.addChild(new Text(theme.fg("toolTitle", theme.bold("ask_user_question")) + mode, 0, 0));
+			container.addChild(createMarkdown(args.question, theme, () => "muted"));
+			if (args.details) {
+				container.addChild(createMarkdown(args.details, theme, () => "dim"));
 			}
 			if (options.length > 0) {
-				const labels = [...options.map((option) => option.label), getOtherLabel(options)].join(", ");
-				text += `\n${theme.fg("dim", `  Options: ${labels}`)}`;
+				container.addChild(new Text(theme.fg("dim", "Options:"), 0, 0));
+				for (const [index, option] of options.entries()) {
+					container.addChild(createMarkdown(`${index + 1}. ${option.label}`, theme, () => "dim"));
+				}
+				container.addChild(createMarkdown(getOtherLabel(options), theme, () => "dim"));
 			}
-			return new Text(text, 0, 0);
+			return container;
 		},
 
 		renderResult(result, _options, theme) {
@@ -653,17 +765,23 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 				return new Text(theme.fg("warning", details.message || "ask_user_question unavailable"), 0, 0);
 			}
 
-			const lines = details.answers.map((answer) => {
+			const container = new Container();
+			for (const answer of details.answers) {
+				let text: string;
 				switch (answer.type) {
 					case "text":
-						return `${theme.fg("success", "✓ ")}${theme.fg("accent", answer.label || "(empty response)")}`;
+						text = answer.label || "(empty response)";
+						break;
 					case "other":
-						return `${theme.fg("success", "✓ ")}${theme.fg("muted", "Other: ")}${theme.fg("accent", answer.label)}`;
+						text = `Other: ${answer.label}`;
+						break;
 					case "option":
-						return `${theme.fg("success", "✓ ")}${theme.fg("accent", `${answer.index}. ${answer.label}`)}`;
+						text = `${answer.index}. ${answer.label}`;
+						break;
 				}
-			});
-			return new Text(lines.join("\n"), 0, 0);
+				container.addChild(createMarkdown(`✓ ${text}`, theme, () => "accent"));
+			}
+			return container;
 		},
 	});
 }

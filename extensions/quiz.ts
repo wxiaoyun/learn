@@ -1,11 +1,14 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { getMarkdownTheme, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
+	Container,
 	Editor,
 	type EditorTheme,
 	Key,
+	Markdown,
 	Text,
 	matchesKey,
 	truncateToWidth,
+	visibleWidth,
 	wrapTextWithAnsi,
 } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
@@ -214,6 +217,43 @@ function addWrapped(lines: string[], text: string, width: number, indent = ""): 
 	}
 }
 
+function createMarkdown(text: string, theme: any, color: () => string): Markdown {
+	return new Markdown(
+		text,
+		0,
+		0,
+		getMarkdownTheme(),
+		{ color: (value) => theme.fg(color(), value) },
+		{ preserveBackslashEscapes: true },
+	);
+}
+
+function addMarkdown(lines: string[], markdown: Markdown, width: number, prefix = ""): void {
+	if (width <= 0) return;
+	const safePrefix = truncateToWidth(prefix, Math.max(0, width - 1), "");
+	const prefixWidth = visibleWidth(safePrefix);
+	const contentWidth = width - prefixWidth;
+	const continuation = " ".repeat(prefixWidth);
+	for (const [index, line] of markdown.render(contentWidth).entries()) {
+		lines.push(`${index === 0 ? safePrefix : continuation}${line}`);
+	}
+}
+
+function addMarkdownText(
+	lines: string[],
+	text: string,
+	theme: any,
+	color: string,
+	width: number,
+	prefix = "",
+): void {
+	addMarkdown(lines, createMarkdown(text, theme, () => color), width, prefix);
+}
+
+function invalidateMarkdown(markdown: Array<Markdown | undefined>): void {
+	for (const component of markdown) component?.invalidate();
+}
+
 function isCorrect(selectedIndices: number[], correctIndices: number[]): boolean {
 	if (selectedIndices.length !== correctIndices.length) return false;
 	const a = [...selectedIndices].sort((x, y) => x - y);
@@ -334,7 +374,7 @@ function renderFeedback(
 		let marker: string;
 		let color: string;
 		if (dontKnow) {
-			// No guess was made — only reveal the correct answer(s); never show ✗.
+			// No guess was made. Only reveal the correct answer(s). Never show ✗.
 			marker = isKey ? "✓" : " ";
 			color = isKey ? "success" : "dim";
 		} else if (isSelected && isKey) {
@@ -344,46 +384,51 @@ function renderFeedback(
 			marker = "✗";
 			color = "error";
 		} else if (!isSelected && isKey) {
-			// correct answer the user missed
 			marker = "✓";
 			color = "success";
 		} else {
 			marker = " ";
 			color = "dim";
 		}
-		add(theme.fg(color, ` ${marker} ${index}. ${opt.label}`));
+		addMarkdownText(lines, opt.label, theme, color, width, ` ${marker} ${index}. `);
 	}
 
 	lines.push("");
 	if (dontKnow) {
 		add(theme.fg("warning", " · You said: I don't know"));
 		const correctStr = correctIndices.map((i) => formatOptionRef(options, i)).join(", ");
-		addWrapped(lines, theme.fg("muted", `Correct answer: ${correctStr}`), width, " ");
+		addMarkdownText(lines, `Correct answer: ${correctStr}`, theme, "muted", width, " ");
 	} else if (correct) {
 		add(theme.fg("success", " ✓ Correct!"));
 	} else {
 		add(theme.fg("error", " ✗ Incorrect."));
 		const correctStr = correctIndices.map((i) => formatOptionRef(options, i)).join(", ");
-		addWrapped(lines, theme.fg("muted", `Correct answer: ${correctStr}`), width, " ");
+		addMarkdownText(lines, `Correct answer: ${correctStr}`, theme, "muted", width, " ");
 	}
 	if (note) {
-		addWrapped(lines, theme.fg("muted", `Your note: ${note}`), width, " ");
+		addMarkdownText(lines, `Your note: ${note}`, theme, "muted", width, " ");
 	}
 	if (explanation) {
 		lines.push("");
-		addWrapped(lines, theme.fg("text", explanation), width, " ");
+		addMarkdownText(lines, explanation, theme, "text", width, " ");
 	}
 	lines.push("");
 	add(theme.fg("dim", " Enter/Esc to continue"));
 }
 
 // Top border + question + optional context. Shared by both components.
-function pushHeader(lines: string[], theme: any, width: number, question: string, context: string | undefined): void {
+function pushHeader(
+	lines: string[],
+	theme: any,
+	width: number,
+	question: Markdown,
+	context: Markdown | undefined,
+): void {
 	lines.push(truncateToWidth(theme.fg("accent", "─".repeat(width)), width));
-	addWrapped(lines, theme.fg("text", question), width, " ");
+	addMarkdown(lines, question, width, " ");
 	if (context) {
 		lines.push("");
-		addWrapped(lines, theme.fg("muted", context), width, " ");
+		addMarkdown(lines, context, width, " ");
 	}
 }
 
@@ -443,9 +488,20 @@ async function askSingleChoice(
 			const editor = makeNoteEditor(tui, theme);
 			let cachedLines: string[] | undefined;
 			let cachedWidth = -1;
+			const questionMarkdown = createMarkdown(question, theme, () => "text");
+			const contextMarkdown = context ? createMarkdown(context, theme, () => "muted") : undefined;
+			const optionMarkdown = allOptions.map((option, index) =>
+				createMarkdown(option.label, theme, () =>
+					focus === "options" && index === optionIndex ? "accent" : "text",
+				),
+			);
+			const descriptionMarkdown = allOptions.map((option) =>
+				option.description ? createMarkdown(option.description, theme, () => "muted") : undefined,
+			);
 
 			function refresh() {
 				cachedLines = undefined;
+				invalidateMarkdown(optionMarkdown);
 				tui.requestRender();
 			}
 
@@ -534,7 +590,7 @@ async function askSingleChoice(
 
 				const lines: string[] = [];
 				const add = (text: string) => lines.push(truncateToWidth(text, width));
-				pushHeader(lines, theme, width, question, context);
+				pushHeader(lines, theme, width, questionMarkdown, contextMarkdown);
 
 				if (phase === "feedback") {
 					renderFeedback(
@@ -558,12 +614,11 @@ async function askSingleChoice(
 				for (let i = 0; i < allOptions.length; i++) {
 					const option = allOptions[i];
 					const selected = focus === "options" && i === optionIndex;
-					const prefix = selected ? theme.fg("accent", "> ") : "  ";
-					const label = `${option.index}. ${option.label}`;
-					const styled = selected ? theme.fg("accent", label) : theme.fg("text", label);
-					add(`${prefix}${styled}`);
-					if (option.description) {
-						addWrapped(lines, theme.fg("muted", option.description), width, "     ");
+					const color = selected ? "accent" : "text";
+					const prefix = (selected ? theme.fg("accent", "> ") : "  ") + theme.fg(color, `${option.index}. `);
+					addMarkdown(lines, optionMarkdown[i], width, prefix);
+					if (descriptionMarkdown[i]) {
+						addMarkdown(lines, descriptionMarkdown[i]!, width, "     ");
 					}
 				}
 
@@ -590,6 +645,7 @@ async function askSingleChoice(
 				render,
 				invalidate: () => {
 					cachedLines = undefined;
+					invalidateMarkdown([questionMarkdown, contextMarkdown, ...optionMarkdown, ...descriptionMarkdown]);
 					editor.invalidate();
 				},
 				handleInput,
@@ -630,9 +686,21 @@ async function askMultiChoice(
 			let cachedLines: string[] | undefined;
 			let cachedWidth = -1;
 			const selected = new Map<string, OptionAnswer>();
+			const questionMarkdown = createMarkdown(question, theme, () => "text");
+			const contextMarkdown = context ? createMarkdown(context, theme, () => "muted") : undefined;
+			const optionMarkdown = choiceItems.map((item, index) =>
+				createMarkdown(item.label, theme, () => {
+					if (focus === "options" && index === optionIndex) return "accent";
+					return selected.has(item.id) ? "success" : "text";
+				}),
+			);
+			const descriptionMarkdown = choiceItems.map((item) =>
+				item.description ? createMarkdown(item.description, theme, () => "muted") : undefined,
+			);
 
 			function refresh() {
 				cachedLines = undefined;
+				invalidateMarkdown(optionMarkdown);
 				tui.requestRender();
 			}
 
@@ -756,7 +824,7 @@ async function askMultiChoice(
 
 				const lines: string[] = [];
 				const add = (text: string) => lines.push(truncateToWidth(text, width));
-				pushHeader(lines, theme, width, question, context);
+				pushHeader(lines, theme, width, questionMarkdown, contextMarkdown);
 
 				if (phase === "feedback") {
 					renderFeedback(
@@ -801,12 +869,11 @@ async function askMultiChoice(
 					}
 
 					const checked = selected.has(item.id);
-					const marker = checked ? "[x]" : "[ ]";
-					const label = `${marker} ${item.index}. ${item.label}`;
-					const styled = isFocused ? theme.fg("accent", label) : theme.fg(checked ? "success" : "text", label);
-					add(`${prefix}${styled}`);
-					if (item.description) {
-						addWrapped(lines, theme.fg("muted", item.description), width, "     ");
+					const marker = `${checked ? "[x]" : "[ ]"} ${item.index}. `;
+					const color = isFocused ? "accent" : checked ? "success" : "text";
+					addMarkdown(lines, optionMarkdown[i], width, prefix + theme.fg(color, marker));
+					if (descriptionMarkdown[i]) {
+						addMarkdown(lines, descriptionMarkdown[i]!, width, "     ");
 					}
 				}
 
@@ -834,6 +901,7 @@ async function askMultiChoice(
 				render,
 				invalidate: () => {
 					cachedLines = undefined;
+					invalidateMarkdown([questionMarkdown, contextMarkdown, ...optionMarkdown, ...descriptionMarkdown]);
 					editor.invalidate();
 				},
 				handleInput,
@@ -978,15 +1046,16 @@ export default function quiz(pi: ExtensionAPI) {
 			const options = normalizeOptions(
 				args.options as Array<{ label: string; value?: string; description?: string }> | undefined,
 			);
-			let text = theme.fg("toolTitle", theme.bold("quiz ")) + theme.fg("muted", args.question);
-			if (args.multiSelect) {
-				text += theme.fg("dim", " [multi-select]");
+			const container = new Container();
+			const noun = options.length === 1 ? "option" : "options";
+			const count = options.length > 0 ? theme.fg("dim", ` (${options.length} ${noun})`) : "";
+			const mode = args.multiSelect ? theme.fg("dim", " [multi-select]") : "";
+			container.addChild(new Text(theme.fg("toolTitle", theme.bold("quiz")) + mode + count, 0, 0));
+			container.addChild(createMarkdown(args.question, theme, () => "muted"));
+			if (args.details) {
+				container.addChild(createMarkdown(args.details, theme, () => "dim"));
 			}
-			if (options.length > 0) {
-				const noun = options.length === 1 ? "option" : "options";
-				text += theme.fg("dim", ` (${options.length} ${noun})`);
-			}
-			return new Text(text, 0, 0);
+			return container;
 		},
 
 		renderResult(result, _options, theme) {
@@ -1005,7 +1074,7 @@ export default function quiz(pi: ExtensionAPI) {
 
 			const correctSet = new Set(details.correctIndices);
 			const selectedSet = new Set(details.answers.map((a) => a.index));
-			const lines: string[] = [];
+			const container = new Container();
 
 			// Full option list in the true (shuffled) display order, with ✓/✗ marks.
 			// Falls back to just the selected answers for older results that predate
@@ -1019,44 +1088,42 @@ export default function quiz(pi: ExtensionAPI) {
 				const isSelected = selectedSet.has(opt.index);
 				const isKey = correctSet.has(opt.index);
 				let mark: string;
-				let body: string;
+				let color: string;
 				if (details.dontKnow) {
-					// No guess — only reveal the correct answer(s); never show ✗.
-					mark = isKey ? theme.fg("success", "✓ ") : "  ";
-					body = isKey ? theme.fg("success", `${opt.index}. ${opt.label}`) : theme.fg("dim", `${opt.index}. ${opt.label}`);
+					mark = isKey ? "✓ " : "  ";
+					color = isKey ? "success" : "dim";
 				} else if (isSelected && isKey) {
-					mark = theme.fg("success", "✓ ");
-					body = theme.fg("accent", `${opt.index}. ${opt.label}`);
+					mark = "✓ ";
+					color = "accent";
 				} else if (isSelected && !isKey) {
-					mark = theme.fg("error", "✗ ");
-					body = theme.fg("error", `${opt.index}. ${opt.label}`);
+					mark = "✗ ";
+					color = "error";
 				} else if (!isSelected && isKey) {
-					mark = theme.fg("success", "✓ ");
-					body = theme.fg("success", `${opt.index}. ${opt.label}`);
+					mark = "✓ ";
+					color = "success";
 				} else {
 					mark = "  ";
-					body = theme.fg("dim", `${opt.index}. ${opt.label}`);
+					color = "dim";
 				}
-				lines.push(`${mark}${body}`);
+				container.addChild(createMarkdown(`${mark}${opt.index}. ${opt.label}`, theme, () => color));
 			}
 
-			lines.push("");
 			const verdict = details.dontKnow
 				? theme.fg("warning", "I don't know")
 				: details.correct
 					? theme.fg("success", "Correct!")
 					: theme.fg("error", "Incorrect");
-			lines.push(verdict);
+			container.addChild(new Text(verdict, 0, 0));
 
 			if (details.note) {
-				lines.push(theme.fg("muted", `Note: ${details.note}`));
+				container.addChild(createMarkdown(`Note: ${details.note}`, theme, () => "muted"));
 			}
 
 			if (details.explanation) {
-				lines.push(theme.fg("muted", details.explanation));
+				container.addChild(createMarkdown(details.explanation, theme, () => "muted"));
 			}
 
-			return new Text(lines.join("\n"), 0, 0);
+			return container;
 		},
 	});
 }
