@@ -1,12 +1,12 @@
 {
   "packages": [
-    "npm:pi-markdown-preview",
     {
       "source": "npm:@juicesharp/rpiv-ask-user-question",
       "autoload": false,
       "extensions": [
         "!index.ts"
       ]
-    }
+    },
+    "npm:@monotykamary/pi-math"
   ]
 }
