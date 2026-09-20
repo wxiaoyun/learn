@@ -1,0 +1,3 @@
+[test]
+# refs/ holds symlinks to other repos, keep bare `bun test` out of them
+root = "./packages"

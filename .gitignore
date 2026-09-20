@@ -3,6 +3,7 @@
 
 # Dependencies
 node_modules/
+dist/
 
 # Environment
 .env
@@ -16,3 +17,5 @@ __pycache__/
 # Runtime state
 .memory/
 *.log
+
+refs/

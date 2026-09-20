@@ -1,0 +1,10 @@
+{
+  "name": "@learn/pi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@mermaid-js/mermaid-cli": "^11.4.2",
+    "@sinclair/typebox": "^0.34.0"
+  }
+}

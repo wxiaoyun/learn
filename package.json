@@ -1,0 +1,15 @@
+{
+  "name": "learn",
+  "private": true,
+  "packageManager": "bun@1.4.2",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "server": "bun run --cwd packages/server start",
+    "test": "bun test packages",
+    "typecheck": "bunx tsc --noEmit -p packages/core/tsconfig.json && bunx tsc --noEmit -p packages/server/tsconfig.json && bunx tsc --noEmit -p packages/browser-extension/tsconfig.json",
+    "install-service": "bun run --cwd packages/server install-service",
+    "uninstall-service": "bun run --cwd packages/server uninstall-service"
+  }
+}

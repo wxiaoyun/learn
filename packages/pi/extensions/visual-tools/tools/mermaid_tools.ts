@@ -24,7 +24,6 @@ import { Type } from "@sinclair/typebox"
 import { fileURLToPath } from "node:url"
 import {
   applyEdit,
-  dirname,
   existsSync,
   findChrome,
   join,
@@ -38,9 +37,7 @@ import {
   writeFileSync,
 } from "./_common.ts"
 
-const TOOL_DIR = dirname(fileURLToPath(import.meta.url))
-const EXTENSION_DIR = dirname(TOOL_DIR)
-const MMDC_BIN = join(EXTENSION_DIR, "node_modules", ".bin", "mmdc")
+const MMDC_BIN = fileURLToPath(new URL("./cli.js", import.meta.resolve("@mermaid-js/mermaid-cli")))
 const GROUP = "mermaid"
 const BODY_FILE = "diagram.mmd"
 const RENDER_TIMEOUT_MS = 120_000
