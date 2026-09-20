@@ -78,7 +78,7 @@ CONTEXT.md
 
 ## Server contract
 
-The server listens on `127.0.0.1`, port from `LEARNING_PORT`, default `4517`. Courses root from `LEARNING_ROOT`, default `~/learning`. All payloads are the core schemas. A request that carries an `Origin` header is rejected unless the origin is listed in `LEARNING_ALLOWED_ORIGINS` (comma separated). The browser extension has a fixed ID, so the value is `chrome-extension://ikiokbkockjjgcogfnggafjclojofmbj`. Requests with no `Origin` header (curl, MCP clients, pi) are allowed.
+The server listens on `127.0.0.1`, port from `LEARNING_PORT`, default `4517`. Courses root from `LEARNING_ROOT`, default `~/learning`. All payloads are the core schemas. A request that carries an `Origin` header is rejected unless the origin is listed in `LEARNING_ALLOWED_ORIGINS` (comma separated). The browser extension has a fixed ID, so the default is `chrome-extension://ikiokbkockjjgcogfnggafjclojofmbj` and the variable is only needed to allow other origins. Requests with no `Origin` header (curl, MCP clients, pi) are allowed.
 
 Asks and answers live in their own append only file, `asks.jsonl`, beside `outcomes.jsonl`. Node summaries in `get_course_state` carry `askCount` and `latestAskAt`, and the state lists the last 20 answered asks. Surfaces are `youtube`, `agent`, `browser` (the review page), and `mobile`.
 

@@ -19,10 +19,10 @@ The manifest contains a fixed RSA public key. The private key was discarded. The
 ikiokbkockjjgcogfnggafjclojofmbj
 ```
 
-Start the learning server with this exact allowlist:
+The server allows this origin by default, so no configuration is needed:
 
 ```sh
-LEARNING_ALLOWED_ORIGINS=chrome-extension://ikiokbkockjjgcogfnggafjclojofmbj mise exec -- bun run server
+mise exec -- bun run server
 ```
 
 ## Demo

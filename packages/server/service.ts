@@ -25,6 +25,12 @@ async function launchctl(...args: string[]): Promise<number> {
   return Bun.spawn(["launchctl", ...args], { stdout: "inherit", stderr: "inherit" }).exited
 }
 
+// Unloading a service that is not loaded fails with "Boot-out failed: 5". That
+// is the normal case on a first install, so keep it off the terminal.
+async function bootoutQuietly(): Promise<void> {
+  await Bun.spawn(["launchctl", "bootout", `gui/${uid}`, plist], { stdout: "ignore", stderr: "ignore" }).exited
+}
+
 if (action === "install") {
   await mkdir(dirname(plist), { recursive: true })
   await mkdir(logs, { recursive: true })
@@ -67,12 +73,12 @@ ${variables}
 </plist>
 `
   await writeFile(plist, contents, "utf8")
-  await launchctl("bootout", `gui/${uid}`, plist)
+  await bootoutQuietly()
   const code = await launchctl("bootstrap", `gui/${uid}`, plist)
   if (code !== 0) throw new Error(`launchctl bootstrap failed with exit code ${code}`)
   console.log(`Installed ${plist}`)
 } else if (action === "uninstall") {
-  await launchctl("bootout", `gui/${uid}`, plist)
+  await bootoutQuietly()
   await rm(plist, { force: true })
   console.log(`Removed ${plist}`)
 } else {

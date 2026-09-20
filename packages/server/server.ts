@@ -102,7 +102,9 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
   const agent = (env.LEARNING_AGENT?.trim() || "claude") as AgentDriver
   const agentTimeoutMs = Number(env.LEARNING_AGENT_TIMEOUT_MS?.trim() || "300000")
   const recapDebounceMs = Number(env.LEARNING_RECAP_DEBOUNCE_MS?.trim() || "20000")
-  const allowedOrigins = (env.LEARNING_ALLOWED_ORIGINS ?? "")
+  // The browser extension's ID is fixed by the public key in its manifest, so
+  // it is the default. Set the variable only to allow other origins.
+  const allowedOrigins = (env.LEARNING_ALLOWED_ORIGINS?.trim() || "chrome-extension://ikiokbkockjjgcogfnggafjclojofmbj")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean)

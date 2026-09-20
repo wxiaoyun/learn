@@ -45,7 +45,7 @@ mise run setup
 ### Server
 
 ```bash
-LEARNING_ALLOWED_ORIGINS=chrome-extension://ikiokbkockjjgcogfnggafjclojofmbj bun run server
+bun run server
 ```
 
 To keep it running across logins on macOS, `mise run service:install` writes and loads a LaunchAgent, and `mise run service:uninstall` removes it. The environment variables below are read at install time and written into the LaunchAgent.
@@ -54,7 +54,7 @@ To keep it running across logins on macOS, `mise run service:install` writes and
 | --- | --- | --- |
 | `LEARNING_ROOT` | `~/learning` | Where courses are stored |
 | `LEARNING_PORT` | `4517` | Port on `127.0.0.1` |
-| `LEARNING_ALLOWED_ORIGINS` | none | Origins allowed to call the server. The extension ID above is fixed by the key in its manifest |
+| `LEARNING_ALLOWED_ORIGINS` | the browser extension | Comma separated origins allowed to call the server. The extension's ID is fixed by the key in its manifest, so the default already allows it |
 | `LEARNING_AGENT` | `claude` | Driver for agent turns the server starts: `claude`, `pi`, or `off` |
 
 The server starts a headless agent turn for three things: grading an explain-back, answering an ask, and writing the next unit's quiz plan after a recap quiz. Each has a fallback, so `off` loses speed and nothing else. With `claude`, these turns run `claude -p` on your Claude subscription.
