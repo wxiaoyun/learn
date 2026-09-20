@@ -80,6 +80,8 @@ CONTEXT.md
 
 The server listens on `127.0.0.1`, port from `LEARNING_PORT`, default `4517`. Courses root from `LEARNING_ROOT`, default `~/learning`. All payloads are the core schemas. A request that carries an `Origin` header is rejected unless the origin is listed in `LEARNING_ALLOWED_ORIGINS` (comma separated). The browser extension has a fixed ID, so the value is `chrome-extension://ikiokbkockjjgcogfnggafjclojofmbj`. Requests with no `Origin` header (curl, MCP clients, pi) are allowed.
 
+Asks and answers live in their own append only file, `asks.jsonl`, beside `outcomes.jsonl`. Node summaries in `get_course_state` carry `askCount` and `latestAskAt`, and the state lists the last 20 answered asks. Surfaces are `youtube`, `agent`, `browser` (the review page), and `mobile`.
+
 Clients never supply record ids. The server computes every Outcome id from the Question id, the surface, and `answeredAt`, so a retried write is reported as a duplicate and changes nothing.
 
 Agent tools are defined once in `packages/server/tools.ts`. Claude Code reaches them over MCP at `/mcp`. pi reaches the same handlers through `POST /tools/:name`, called by the pi extension `learning-tools.ts`.
@@ -89,6 +91,7 @@ Agent tools are defined once in `packages/server/tools.ts`. Claude Code reaches 
 - `put_roadmap { roadmap }`, `put_nodes { courseId, nodes }`, `put_quiz_plan { courseId, unitId, plan }`: validated full replace of one file.
 - `get_outcomes { courseId, since? }`: outcome records for one course.
 - `append_outcome { outcome, answeredAt? }`, `append_grade { courseId, grade }`: append one record. `answeredAt` defaults to now on the agent tool. The server stamps each grade with `gradedAt`, which is what incremental ingest filters on. An outcome may carry its `tier`, which is how an ad hoc question asked on the agent surface counts as evidence.
+- `answer_ask { courseId, askId, text, nodeIds }`: the one answer to an ask, tagged with the nodes it concerns. A second answer is a duplicate and changes nothing.
 - `get_due_reviews { courseId? }`: nodes due for spaced review across courses, each with a picked question and a `poolExhausted` flag, plus the daily streak.
 
 HTTP for the browser extension and the mobile surface:
@@ -96,6 +99,8 @@ HTTP for the browser extension and the mobile surface:
 - `GET /health`
 - `GET /quiz-plans/by-video/:videoId`: the course id, unit id, quiz plan, three lists of question ids (answered, meaning any outcome other than skipped, then correct, then wrong by the latest outcome per question), and the last 10 graded results for the course, which seed tier selection. 404 when no plan exists. When the video belongs to a roadmap unit that has no quiz plan yet, the 404 body says so and carries a hint derived on each request: "visit the agent first" with up to three node titles when a prerequisite node was last answered wrong, "a quiz plan is being generated, reload in a minute" while a generation turn is pending, else "no quiz plan yet, run a primer first". A video that belongs to no course gets a plain 404 and the extension stays silent.
 - `GET /reviews/due`: the same payload as `get_due_reviews`.
+- `POST /asks`: one ask, answered at once with its id, then one agent turn is queued. 503 with nothing stored when agent turns are off.
+- `GET /asks/:askId`: the ask with its answer or `answer: null`, plus a `failed` flag when the turn failed or timed out. `GET /asks/by-video/:videoId`: the unit's asks with answers, oldest first.
 - `GET /grades/:outcomeId`: the grade for one outcome, or 404. The browser extension polls it for up to 90 seconds after an explain-back.
 - `POST /outcomes`: one outcome or an array of outcomes. `answeredAt` is required here, because the client supplies it to keep retries idempotent.
 - `POST /logs`: forward client log lines into the server log file.
