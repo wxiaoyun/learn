@@ -7,14 +7,22 @@
   <style>
     body { width: 250px; margin: 0; padding: 16px; color: #18181b; background: #fff; font: 14px system-ui, sans-serif; }
     p { margin: 0 0 12px; }
+    .actions { display: grid; gap: 8px; }
     button { width: 100%; border: 0; border-radius: 6px; padding: 9px; color: #fff; background: #2563eb; font: inherit; font-weight: 650; cursor: pointer; }
+    button.secondary { color: inherit; background: #e4e4e7; }
     button:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
-    @media (prefers-color-scheme: dark) { body { color: #fafafa; background: #18181b; } }
+    @media (prefers-color-scheme: dark) {
+      body { color: #fafafa; background: #18181b; }
+      button.secondary { background: #3f3f46; }
+    }
   </style>
 </head>
 <body>
   <p id="status" role="status">Checking learning server...</p>
-  <button id="copy" type="button">Copy logs</button>
+  <div class="actions">
+    <button id="review" type="button">Review</button>
+    <button id="copy" class="secondary" type="button">Copy logs</button>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>

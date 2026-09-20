@@ -12,6 +12,7 @@ const result = await Bun.build({
     join(root, "src/background.ts"),
     join(root, "src/content.ts"),
     join(root, "src/popup.ts"),
+    join(root, "src/review.ts"),
   ],
   outdir: dist,
   target: "browser",
@@ -27,6 +28,7 @@ if (!result.success) {
 await Promise.all([
   cp(join(root, "manifest.json"), join(dist, "manifest.json")),
   cp(join(root, "popup.html"), join(dist, "popup.html")),
+  cp(join(root, "review.html"), join(dist, "review.html")),
   cp(join(root, "node_modules/katex/dist/katex.min.css"), join(dist, "katex.min.css")),
   cp(join(root, "node_modules/katex/dist/fonts"), join(dist, "fonts"), { recursive: true }),
 ])

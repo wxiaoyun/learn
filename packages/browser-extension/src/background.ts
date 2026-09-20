@@ -5,13 +5,19 @@ const LOG_KEY = "learningLogs"
 const MAX_LOGS = 400
 
 type StoredLog = ClientLogLine & { ts: string }
+type ServerReply = { ok: boolean; status: number; data?: unknown; error?: string }
 type Message =
   | { type: "plan"; videoId: string }
   | { type: "outcome"; videoId: string; outcome: OutcomeInput }
+  | { type: "reviewOutcome"; outcome: OutcomeInput }
+  | { type: "reviewDue" }
+  | { type: "reviewStreak" }
   | { type: "grade"; videoId: string; outcomeId: string }
   | { type: "log"; videoId?: string; line: ClientLogLine }
   | { type: "health" }
   | { type: "logs" }
+
+const BADGE_ALARM = "refresh-due-reviews"
 
 let storageQueue = Promise.resolve()
 
@@ -61,7 +67,7 @@ async function request(
   target: string,
   videoId?: string,
   init?: RequestInit,
-): Promise<{ ok: boolean; status: number; data?: unknown; error?: string }> {
+): Promise<ServerReply> {
   await log({ level: "info", stage, target, status: "start" }, videoId)
   try {
     const response = await fetch(`${SERVER}${target}`, init)
@@ -82,6 +88,61 @@ async function request(
   }
 }
 
+async function setBadge(text: string): Promise<void> {
+  await log({ level: "info", stage: "set_due_badge", target: "toolbar", status: "start" })
+  try {
+    await chrome.action.setBadgeText({ text })
+    await log({ level: "info", stage: "set_due_badge", target: "toolbar", status: "ok" })
+  } catch (error) {
+    await log({
+      level: "error",
+      stage: "set_due_badge",
+      target: "toolbar",
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+async function refreshBadge(): Promise<void> {
+  const response = await request("refresh_due_badge", "/reviews/due")
+  if (!response.ok) {
+    await setBadge("")
+    return
+  }
+  const reviews = response.data && typeof response.data === "object"
+    ? (response.data as Record<string, unknown>).reviews
+    : undefined
+  if (!Array.isArray(reviews)) {
+    await log({
+      level: "error",
+      stage: "refresh_due_badge",
+      target: "/reviews/due",
+      status: "failed",
+      error: "invalid server response",
+    })
+    await setBadge("")
+    return
+  }
+  await setBadge(reviews.length === 0 ? "" : String(reviews.length))
+}
+
+async function scheduleBadgeRefresh(): Promise<void> {
+  await log({ level: "info", stage: "schedule_due_badge", target: BADGE_ALARM, status: "start" })
+  try {
+    await chrome.alarms.create(BADGE_ALARM, { periodInMinutes: 30 })
+    await log({ level: "info", stage: "schedule_due_badge", target: BADGE_ALARM, status: "ok" })
+  } catch (error) {
+    await log({
+      level: "error",
+      stage: "schedule_due_badge",
+      target: BADGE_ALARM,
+      status: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
 async function handle(message: Message): Promise<unknown> {
   if (message.type === "plan") {
     const target = `/quiz-plans/by-video/${encodeURIComponent(message.videoId)}`
@@ -94,6 +155,17 @@ async function handle(message: Message): Promise<unknown> {
       body: JSON.stringify(message.outcome),
     })
   }
+  if (message.type === "reviewOutcome") {
+    const response = await request("post_review_outcome", "/outcomes", undefined, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(message.outcome),
+    })
+    await refreshBadge()
+    return response
+  }
+  if (message.type === "reviewDue") return request("fetch_due_reviews", "/reviews/due")
+  if (message.type === "reviewStreak") return request("refresh_review_streak", "/reviews/due")
   if (message.type === "grade") {
     return request("fetch_grade", `/grades/${encodeURIComponent(message.outcomeId)}`, message.videoId)
   }
@@ -114,4 +186,16 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse) =
     error: error instanceof Error ? error.message : String(error),
   }))
   return true
+})
+
+chrome.runtime.onInstalled.addListener(() => {
+  void scheduleBadgeRefresh()
+  void refreshBadge()
+})
+chrome.runtime.onStartup.addListener(() => {
+  void scheduleBadgeRefresh()
+  void refreshBadge()
+})
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === BADGE_ALARM) void refreshBadge()
 })

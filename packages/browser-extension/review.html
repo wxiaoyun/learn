@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spaced review</title>
+  <link rel="stylesheet" href="katex.min.css">
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #18181b; background: #f4f4f5; font: 16px/1.5 system-ui, sans-serif; }
+    main { width: min(680px, calc(100% - 32px)); margin: 8vh auto 32px; }
+    .card { border: 1px solid #d4d4d8; border-radius: 14px; padding: 24px; background: #fff; box-shadow: 0 8px 30px rgb(0 0 0 / 10%); }
+    h1 { margin: 0 0 16px; font-size: 16px; color: #52525b; }
+    .prompt { margin: 16px 0; font-size: 21px; white-space: pre-wrap; }
+    .options { display: grid; gap: 9px; margin: 20px 0; }
+    button { border: 1px solid #71717a; border-radius: 8px; padding: 10px 13px; color: inherit; background: #fff; font: inherit; text-align: left; cursor: pointer; }
+    button:hover:not(:disabled) { background: #e4e4e7; }
+    button:disabled { cursor: default; opacity: 0.65; }
+    button:focus-visible { outline: 3px solid #60a5fa; outline-offset: 2px; }
+    button.selected { border-color: #2563eb; background: #dbeafe; }
+    button.primary { border-color: #1d4ed8; color: #fff; background: #2563eb; font-weight: 650; text-align: center; }
+    button.primary:hover:not(:disabled) { background: #1d4ed8; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+    .feedback { border-left: 5px solid #16a34a; padding-left: 12px; font-weight: 700; }
+    .feedback.wrong { border-color: #dc2626; }
+    .correct-answer, .explanation { margin: 14px 0; white-space: pre-wrap; }
+    .failure { margin-top: 20px; border-top: 1px solid #d4d4d8; padding-top: 16px; }
+    .failure button, main > button { min-width: 110px; }
+    .failure-message { font-weight: 650; }
+    .streak { color: #52525b; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #fafafa; background: #09090b; }
+      .card { border-color: #52525b; background: #18181b; }
+      h1, .streak { color: #d4d4d8; }
+      button { background: #27272a; }
+      button:hover:not(:disabled) { background: #3f3f46; }
+      button.selected { border-color: #60a5fa; background: #1e3a5f; }
+      .failure { border-color: #52525b; }
+    }
+  </style>
+</head>
+<body>
+  <main id="app" aria-live="polite">
+    <p>Loading...</p>
+  </main>
+  <script src="review.js"></script>
+</body>
+</html>
