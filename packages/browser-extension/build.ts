@@ -25,6 +25,16 @@ if (!result.success) {
   process.exit(1)
 }
 
+// Chrome refuses a content script that holds a Unicode noncharacter, with the
+// misleading error "It isn't UTF-8 encoded". KaTeX uses U+FFFF in a regex range
+// and bun emits it raw, so write those code points as escapes instead.
+const noncharacters = /[﷐-﷯￾￿]/g
+for (const output of result.outputs) {
+  const text = await Bun.file(output.path).text()
+  const escaped = text.replace(noncharacters, (char) => `\\u${char.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0")}`)
+  if (escaped !== text) await Bun.write(output.path, escaped)
+}
+
 await Promise.all([
   cp(join(root, "manifest.json"), join(dist, "manifest.json")),
   cp(join(root, "popup.html"), join(dist, "popup.html")),
