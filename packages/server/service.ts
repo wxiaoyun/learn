@@ -76,5 +76,5 @@ ${variables}
   await rm(plist, { force: true })
   console.log(`Removed ${plist}`)
 } else {
-  throw new Error("usage: bun run service.ts install|uninstall")
+  throw new Error("usage: mise run service:install or mise run service:uninstall")
 }

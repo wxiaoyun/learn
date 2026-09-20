@@ -9,9 +9,7 @@
   "scripts": {
     "start": "bun run index.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "install-service": "bun run service.ts install",
-    "uninstall-service": "bun run service.ts uninstall"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@effect/ai": "^0.37.0",

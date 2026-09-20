@@ -36,9 +36,11 @@ Course data lives outside the repo, under `~/learning` by default.
 ```bash
 git clone git@github.com:wxiaoyun/learn.git
 cd learn
-mise install
-bun install
+mise trust && mise install
+mise run bootstrap
 ```
+
+`bootstrap` installs dependencies, links `packages/pi` as `.pi` in the repo root, and installs the Claude Code plugin for this project only (local scope, nothing is written to committed settings). It is safe to run again. `mise run unbootstrap` undoes the link and the plugin.
 
 ### Server
 
@@ -46,7 +48,7 @@ bun install
 LEARNING_ALLOWED_ORIGINS=chrome-extension://ikiokbkockjjgcogfnggafjclojofmbj bun run server
 ```
 
-To keep it running across logins on macOS, `bun run install-service` writes and loads a LaunchAgent, and `bun run uninstall-service` removes it.
+To keep it running across logins on macOS, `mise run service:install` writes and loads a LaunchAgent, and `mise run service:uninstall` removes it. The environment variables below are read at install time and written into the LaunchAgent.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -59,7 +61,7 @@ The server starts a headless agent turn for three things: grading an explain-bac
 
 ### pi
 
-Link the pi config into the project where you study, then start pi there:
+`bootstrap` already linked `.pi` in this repo, so pi works when started here. To study in another project, link the pi config there:
 
 ```bash
 cd /path/to/your-learning-project
@@ -70,15 +72,12 @@ The visual makers need a subagent implementation such as [pi-interactive-subagen
 
 ### Claude Code
 
-With the server running:
+`bootstrap` already installed the plugin for sessions started in this repo: the five skills and the `learning` MCP server, which needs the server running. To have it in every project, install it at user scope:
 
 ```bash
 claude plugin marketplace add /path/to/learn
 claude plugin install learning@learning
-claude plugin details learning@learning
 ```
-
-This installs the five skills and registers the `learning` MCP server.
 
 ### Browser extension
 

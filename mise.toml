@@ -1,2 +1,42 @@
 [tools]
 bun = "latest"
+
+[tasks.bootstrap]
+description = "Install dependencies, link packages/pi as .pi, and install the Claude Code plugin for this project only"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+bun install
+
+if [ -e .pi ] && [ ! -L .pi ]; then
+  echo ".pi exists and is not a symlink, move it away first" >&2
+  exit 1
+fi
+ln -sfn packages/pi .pi
+echo "linked .pi -> packages/pi"
+
+# Local scope keeps the absolute marketplace path out of committed settings.
+claude plugin marketplace add "$PWD" --scope local
+claude plugin install learning@learning --scope local
+claude plugin details learning@learning
+"""
+
+[tasks.unbootstrap]
+description = "Remove the .pi link and this project's Claude Code plugin"
+run = """
+#!/usr/bin/env bash
+set -uo pipefail
+
+[ -L .pi ] && rm .pi
+claude plugin uninstall learning@learning --scope local
+claude plugin marketplace remove learning
+"""
+
+[tasks."service:install"]
+description = "Install and load the learning server as a launchd agent (macOS)"
+run = "bun run packages/server/service.ts install"
+
+[tasks."service:uninstall"]
+description = "Unload and remove the learning server launchd agent"
+run = "bun run packages/server/service.ts uninstall"

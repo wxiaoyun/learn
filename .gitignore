@@ -19,3 +19,6 @@ __pycache__/
 *.log
 
 refs/
+# Created by `mise run bootstrap`
+.pi
+.claude/settings.local.json
