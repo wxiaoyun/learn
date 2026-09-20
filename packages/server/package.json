@@ -1,0 +1,28 @@
+{
+  "name": "@learn/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./tools": "./tools.ts"
+  },
+  "scripts": {
+    "start": "bun run index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "install-service": "bun run service.ts install",
+    "uninstall-service": "bun run service.ts uninstall"
+  },
+  "dependencies": {
+    "@effect/ai": "^0.37.0",
+    "@effect/platform": "^0.97.2",
+    "@effect/platform-node": "^0.108.2",
+    "@learn/core": "workspace:*",
+    "effect": "^3.22.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.0"
+  }
+}
