@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Learning YouTube surface",
+  "version": "0.1.0",
+  "description": "Plays Quiz plans over YouTube videos.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtNuzPL/cCmDU6o64BjywIuChhPFzO0inA1xJEtlqNybv5oK0KsryANUkPuqNajWQJgAnJ4v/dusHldru8HquGTi4pzJnpEuAonP6Ec0c9Vgswo2CjzDWlELKlMqxxi1fs3ZK8NxQ3q3xfc2PZR7mz/BAoHQ9A3EKW61+aA+g+jnOc/Qhmz0oTE7B5ofC4V3qjHq465gib3x4XCfAI06z3j3TEc/oqED1WS/UzE34BT7fEwKd5e8qewg5opU/fZ9ON4lELvKh/LITE3/nRwZOhmqc9dU9gwfOiaHND530PFnoZk7W0matK+ng8XQly8pyNzu5AOjgVPH839rYXWGgOwIDAQAB",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1:4517/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Learning logs",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["katex.min.css", "fonts/*"],
+      "matches": ["https://www.youtube.com/*"]
+    }
+  ]
+}

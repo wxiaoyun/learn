@@ -1,0 +1,22 @@
+{
+  "name": "@learn/browser-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run build.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "seed-demo": "bun run seed-demo.ts"
+  },
+  "dependencies": {
+    "@learn/core": "workspace:*",
+    "katex": "^0.16.22"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/chrome": "^0.1.32",
+    "@types/katex": "^0.16.8",
+    "typescript": "^5.9.0"
+  }
+}
