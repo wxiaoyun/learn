@@ -1,0 +1,14 @@
+{
+  "name": "learning",
+  "description": "Claude Code packaging for the learning system.",
+  "owner": {
+    "name": "wuxiaoyun"
+  },
+  "plugins": [
+    {
+      "name": "learning",
+      "description": "Teach through small, quiz-checked steps with shared learning tools.",
+      "source": "./packages/core"
+    }
+  ]
+}

@@ -24,3 +24,25 @@ ln -s /path/to/learn/packages/pi .pi
 
 Start pi in the learning project. The optional visual makers still require a compatible subagent implementation and their system rendering tools.
 
+## Claude Code
+
+Start the local server from the repository root:
+
+```bash
+bun run server
+```
+
+In another terminal, add the local marketplace and install the plugin:
+
+```bash
+cd /path/to/learn
+claude plugin marketplace add "$PWD"
+claude plugin install learning@learning
+```
+
+Check that the five skills and MCP server loaded:
+
+```bash
+claude plugin details learning@learning
+claude mcp list
+```
