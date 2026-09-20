@@ -64,7 +64,6 @@ packages/
   server/               HTTP, MCP, logging, launchd install script
   pi/                   pi extensions, agents, settings
   browser-extension/    YouTube surface
-  mobile/               Expo app (last milestone)
 docs/
 CONTEXT.md
 ```
@@ -116,8 +115,11 @@ HTTP for the browser extension and the mobile surface:
 9. Spaced review in the browser extension and on the agent surface.
 10. Explain-back with harness-agnostic headless grading (`claude -p` and `pi -p` drivers).
 11. Headless generation of the next unit's quiz plan after a recap quiz. If a prerequisite node was missed, a toast says to visit the agent first and no plan is generated.
-12. Mobile surface: Expo, Tailscale, offline cache, one local notification per day, unsigned IPA sideload. Copy the skeleton and the `-core.ts` split from `vibe-tracker`.
 
 ### `teach` edits in milestone 7
 
 Replace the original author's "he" framing with "the learner". Add the increment rule with the 85 percent target. Add "outcomes are the prior". Add a tool name mapping so the skill works on Claude Code, where `quiz` maps onto `AskUserQuestion`. Tune further from real sessions.
+
+## Backlog
+
+- Mobile surface, called off on 2026-09-20 and kept for later: Expo, Tailscale, offline cache, one local notification per day, unsigned IPA sideload. Copy the skeleton and the `-core.ts` split from `vibe-tracker`. `GET /reviews/due` and `POST /outcomes` already serve it.
