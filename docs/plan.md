@@ -43,6 +43,14 @@ One learning system with one model of what the learner knows, across every surfa
 - A review draws an unseen question from the node's pool. When the pool runs out, the agent refills it.
 - An explain-back is a plain text field on every surface. System dictation covers voice. It is stored ungraded, then graded by a headless agent turn when possible, else at the next session. A grade is a judgment on the node plus one sentence on what was missing, never a bare score.
 
+### Asks
+
+- On a course video, a keyboard shortcut opens an ask box over the player and pauses the video. It is a plain text field, so system dictation works. The learner may resume while waiting. The answer appears in the panel, or as a toast that reopens it. The panel lists the unit's earlier asks.
+- Each ask is one headless agent turn. The prompt holds the transcript up to the ask's timestamp with the last two minutes marked as just watched, the nodes covered so far, the learner's outcomes, and up to the last 5 asks and answers of the unit, so follow-ups work with no session state.
+- An answer is short, about 120 words, direct and expository, and follows the `teach` principles in small: ground it in something the learner holds, then the motivated step. No quizzes inside an answer. When the unit covers the point later, the answer still answers and adds where the unit gets to it. It never refuses. It ends with one line when the node deserves a proper session.
+- The agent tags each ask with the node it concerns. Asks are stored and appear in `get_course_state`. An ask is a confusion signal. It is never correct or wrong and never moves a Leitner box. Repeated asks on a prerequisite node count toward the "visit the agent first" hint.
+- Asks work only on course videos, including ones with no quiz plan yet. With `LEARNING_AGENT=off` the box says asks are disabled. A unit with no transcript is answered from slides and nodes, and the answer says so.
+
 ### Rewards
 
 Three signals only: instant right or wrong with the explanation, a per-unit bar of nodes landed, and a daily streak that counts only real evidence (one due review done, or one new node passed at application tier). No XP, levels, or badges.
@@ -115,6 +123,7 @@ HTTP for the browser extension and the mobile surface:
 9. Spaced review in the browser extension and on the agent surface.
 10. Explain-back with harness-agnostic headless grading (`claude -p` and `pi -p` drivers).
 11. Headless generation of the next unit's quiz plan after a recap quiz. If a prerequisite node was missed, a toast says to visit the agent first and no plan is generated.
+12. Asks: the learner asks the agent mid-unit, with the agent aware of the location and what has been covered.
 
 ### `teach` edits in milestone 7
 

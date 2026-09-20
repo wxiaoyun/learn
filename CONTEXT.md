@@ -112,6 +112,14 @@ _Avoid_: Result, answer, score
 **Flag**:
 The learner's report that a question itself is wrong or unclear. A flagged outcome never counts toward Knowledge State.
 
+**Ask**:
+Something the learner asks the agent while working through a unit, anchored to a location in it. An ask signals confusion about a node and is never correct or wrong.
+_Avoid_: Question (reserved for a gradable prompt), chat, query
+
+**Answer**:
+The agent's short reply to one ask, written from what the unit has covered up to the ask's location plus what the learner already holds.
+_Avoid_: Response, reply
+
 **Spaced review**:
 Re-testing a node after growing intervals of days to keep it from fading.
 _Avoid_: Revision, flashcards

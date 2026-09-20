@@ -10,6 +10,8 @@ We generate one unit's quiz plan at a time, not the whole course upfront. Outcom
 
 Agent turns started by the server are an optional enhancement and always have a fallback. Grading an explain-back falls back to the next interactive session. Generating the next unit's quiz plan after a recap quiz falls back to the learner running a primer. These turns run headless through one server function with two drivers, `claude -p` and `pi -p`, and the agent returns its result through the same typed tools as any other write, so nothing parses agent prose.
 
+An ask is the one place where the learner waits on a model, and it does not break this decision. The rule is that nothing the system does on its own makes the learner wait. An ask is started by the learner, who chooses the wait, and the unit keeps playing if they resume. It uses the same headless turn function and the same fallback idea: with agent turns off, the ask box says so.
+
 ## Considered Options
 
 - **Fully live generation.** Every question generated on demand. Rejected because learning would block on agent latency and uptime, and each question would cost a turn.
