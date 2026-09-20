@@ -37,10 +37,10 @@ Course data lives outside the repo, under `~/learning` by default.
 git clone git@github.com:wxiaoyun/learn.git
 cd learn
 mise trust && mise install
-mise run bootstrap
+mise run setup
 ```
 
-`bootstrap` installs dependencies, links `packages/pi` as `.pi` in the repo root, and installs the Claude Code plugin for this project only (local scope, nothing is written to committed settings). It is safe to run again. `mise run unbootstrap` undoes the link and the plugin.
+`setup` installs dependencies, then prepares the learning directory (`LEARNING_ROOT`, default `~/learning`), which is where you study and where courses are stored: it links `packages/pi` there as `.pi`, and installs the Claude Code plugin for that directory only (local scope). It is safe to run again. `mise run setup:undo` removes the link and the plugin.
 
 ### Server
 
@@ -61,7 +61,7 @@ The server starts a headless agent turn for three things: grading an explain-bac
 
 ### pi
 
-`bootstrap` already linked `.pi` in this repo, so pi works when started here. To study in another project, link the pi config there:
+`setup` already linked `.pi` into the learning directory, so start pi there. To use it in another project, link the pi config there:
 
 ```bash
 cd /path/to/your-learning-project
@@ -72,7 +72,7 @@ The visual makers need a subagent implementation such as [pi-interactive-subagen
 
 ### Claude Code
 
-`bootstrap` already installed the plugin for sessions started in this repo: the five skills and the `learning` MCP server, which needs the server running. To have it in every project, install it at user scope:
+`setup` already installed the plugin for Claude Code sessions started in the learning directory: the five skills and the `learning` MCP server, which needs the server running. To have it in every project, install it at user scope:
 
 ```bash
 claude plugin marketplace add /path/to/learn
