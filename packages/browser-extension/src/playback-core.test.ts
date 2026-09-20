@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Placement, QuizPlan, Question } from "@learn/core"
-import { landedNodeIds, playbackStep, recapQuestionIds, type PlacementOutcome } from "./playback-core"
+import { gradeToast, landedNodeIds, playbackStep, recapQuestionIds, type PlacementOutcome } from "./playback-core"
 
 const location = (seconds: number) => ({
   unitId: "demo-unit",
@@ -134,5 +134,10 @@ describe("playback state", () => {
     }
     expect([...landedNodeIds(quizPlan, new Set(["recall"]))]).toEqual([])
     expect([...landedNodeIds(quizPlan, new Set(["application"]))]).toEqual(["demo-node"])
+  })
+
+  test("formats Grade judgments in plain words", () => {
+    expect(gradeToast({ judgment: "partial", missing: "One detail was missing." }))
+      .toBe("Partly understood. One detail was missing.")
   })
 })

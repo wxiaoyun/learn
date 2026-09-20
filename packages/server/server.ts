@@ -49,6 +49,7 @@ import {
   ParseResult,
   Schema,
 } from "effect"
+import { makeAgentTurns, type AgentDriver, type AgentTurns } from "./agent-turn"
 import {
   ConflictError,
   LearningStore,
@@ -74,8 +75,12 @@ const ServerConfigSchema = Schema.Struct({
   root: Schema.String.pipe(Schema.minLength(1)),
   port: Schema.Number.pipe(Schema.int(), Schema.between(0, 65_535)),
   allowedOrigins: Schema.Array(OriginSchema),
+  agent: Schema.Literal("claude", "pi", "off"),
+  agentTimeoutMs: Schema.Number.pipe(Schema.int(), Schema.positive()),
+  recapDebounceMs: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
 })
 const VideoParamsSchema = Schema.Struct({ videoId: Schema.String.pipe(Schema.minLength(1)) })
+const GradeParamsSchema = Schema.Struct({ outcomeId: Schema.String.pipe(Schema.minLength(1)) })
 const ToolParamsSchema = Schema.Struct({ name: Schema.String.pipe(Schema.minLength(1)) })
 const ReviewQuerySchema = Schema.Struct({ courseId: Schema.optional(SlugSchema) })
 const OutcomesBodySchema = Schema.Union(OutcomeInputSchema, Schema.Array(OutcomeInputSchema).pipe(Schema.minItems(1)))
@@ -85,6 +90,9 @@ export type ServerConfig = Schema.Schema.Type<typeof ServerConfigSchema>
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const portText = env.LEARNING_PORT?.trim() || "4517"
   const port = Number(portText)
+  const agent = (env.LEARNING_AGENT?.trim() || "claude") as AgentDriver
+  const agentTimeoutMs = Number(env.LEARNING_AGENT_TIMEOUT_MS?.trim() || "300000")
+  const recapDebounceMs = Number(env.LEARNING_RECAP_DEBOUNCE_MS?.trim() || "20000")
   const allowedOrigins = (env.LEARNING_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((value) => value.trim())
@@ -93,6 +101,9 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
     root: getLearningRoot(env),
     port,
     allowedOrigins,
+    agent,
+    agentTimeoutMs,
+    recapDebounceMs,
   })
   if (decoded._tag === "Left") {
     throw new Error(ParseResult.TreeFormatter.formatErrorSync(decoded.left))
@@ -264,7 +275,7 @@ function roadmaps(root: string): Effect.Effect<ReadonlyArray<Roadmap>, AppError,
   })
 }
 
-function makeStore(root: string): LearningStoreService {
+function makeStore(root: string, turns: AgentTurns): LearningStoreService {
   // ponytail: one global append queue fits one learner. Use per-course queues if outcome throughput grows.
   let appendQueue = Promise.resolve()
   const roadmapMutex = Effect.unsafeMakeSemaphore(1)
@@ -497,6 +508,14 @@ function makeStore(root: string): LearningStoreService {
     }),
     appendOutcome: (outcome) => append(outcome.courseId, outcome),
     appendGrade: (courseId, grade: GradeOutcome) => append(courseId, grade),
+    getGrade: (outcomeId) => Effect.gen(function*() {
+      for (const courseId of yield* courseIds(root)) {
+        const grade = (yield* getOutcomes(courseId)).find((record): record is GradeOutcome =>
+          record.type === "grade" && record.outcomeId === outcomeId)
+        if (grade) return grade
+      }
+      return yield* new NotFoundError({ message: `no Grade exists for Outcome "${outcomeId}"` })
+    }),
     quizPlanByVideo: (videoId) => Effect.gen(function*() {
       // ponytail: linear course scan is fine for a personal library. Index by video ID if course count makes lookup slow.
       for (const roadmap of yield* roadmaps(root)) {
@@ -506,8 +525,15 @@ function makeStore(root: string): LearningStoreService {
         const file = quizPlanPath(root, roadmap.courseId, unit.id)
         const text = yield* readOptional(file)
         if (text === undefined) {
+          const hint = yield* Effect.tryPromise({
+            try: () => turns.missingPlanHint(roadmap, unit),
+            catch: (error) => new StorageError({
+              message: `derive Quiz plan hint: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+          })
           return yield* new NotFoundError({
-            message: `no quiz plan exists for YouTube video ID "${videoId}"`,
+            message: `no Quiz plan exists for Course video ID "${videoId}"`,
+            details: { courseVideo: true, hint },
           })
         }
         const plan = yield* decodeFile("decode_quiz_plan", file, () => parseQuizPlan(text, file))
@@ -627,17 +653,23 @@ function handled<A extends HttpServerResponse.HttpServerResponse, R>(
       status: "failed",
       error: error.message,
     })
-    return HttpServerResponse.unsafeJson({ error: error.message }, { status: statusOf(error) })
+    const details = error instanceof NotFoundError ? error.details : undefined
+    return HttpServerResponse.unsafeJson({ error: error.message, ...details }, { status: statusOf(error) })
   })))
 }
 
-function routes() {
+function routes(turns: AgentTurns) {
   return AppRouter.use((router) => Effect.all([
     router.get("/health", Effect.succeed(HttpServerResponse.unsafeJson({ status: "ok" }))),
     router.get("/quiz-plans/by-video/:videoId", handled(Effect.gen(function*() {
       const params = yield* HttpRouter.params
       const { videoId } = yield* decodeHttp("decode_path", "/quiz-plans/by-video/:videoId", VideoParamsSchema, params)
       return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.quizPlanByVideo(videoId)))
+    }))),
+    router.get("/grades/:outcomeId", handled(Effect.gen(function*() {
+      const params = yield* HttpRouter.params
+      const { outcomeId } = yield* decodeHttp("decode_path", "/grades/:outcomeId", GradeParamsSchema, params)
+      return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.getGrade(outcomeId)))
     }))),
     router.get("/reviews/due", handled(Effect.gen(function*() {
       const request = yield* HttpServerRequest.HttpServerRequest
@@ -655,7 +687,9 @@ function routes() {
           ...input,
           id: createOutcomeId(input),
         }
-        results.push(yield* store.appendOutcome(outcome))
+        const result = yield* store.appendOutcome(outcome)
+        results.push(result)
+        if ((result as { status?: string }).status === "appended") turns.handleOutcome(outcome)
       }
       return HttpServerResponse.unsafeJson({ results })
     }))),
@@ -740,9 +774,9 @@ function middleware(allowedOrigins: ReadonlyArray<string>) {
   )
 }
 
-function appLayer(config: ServerConfig, server: ReturnType<typeof createServer>) {
-  const LoggerLive = Layer.succeed(ServerLogger, loggerService(config.root))
-  const StoreLive = Layer.succeed(LearningStore, makeStore(config.root))
+function appLayer(config: ServerConfig, server: ReturnType<typeof createServer>, turns: AgentTurns, logger: ServerLoggerService) {
+  const LoggerLive = Layer.succeed(ServerLogger, logger)
+  const StoreLive = Layer.succeed(LearningStore, makeStore(config.root, turns))
   const httpMiddleware = (app: any) => middleware(config.allowedOrigins)(
     HttpMiddleware.cors({
       allowedOrigins: config.allowedOrigins,
@@ -752,7 +786,7 @@ function appLayer(config: ServerConfig, server: ReturnType<typeof createServer>)
   )
   return AppRouter.serve(httpMiddleware as any).pipe(
     Layer.provide(Layer.mergeAll(
-      routes(),
+      routes(turns),
       McpServer.layerHttp({
         name: "learning",
         version: "0.1.0",
@@ -775,11 +809,27 @@ export type RunningServer = {
   readonly close: () => Promise<void>
 }
 
-export async function startServer(input: ServerConfig): Promise<RunningServer> {
+export async function startServer(
+  input: ServerConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<RunningServer> {
   const decoded = Schema.decodeUnknownEither(ServerConfigSchema, decodeOptions)(input)
   if (decoded._tag === "Left") throw new Error(ParseResult.TreeFormatter.formatErrorSync(decoded.left))
   const server = createServer()
-  const program = Layer.launch(appLayer(decoded.right, server)) as Effect.Effect<never, unknown, never>
+  const logger = loggerService(decoded.right.root)
+  const turns = makeAgentTurns({
+    root: decoded.right.root,
+    driver: decoded.right.agent,
+    timeoutMs: decoded.right.agentTimeoutMs,
+    recapDebounceMs: decoded.right.recapDebounceMs,
+    port: () => {
+      const address = server.address()
+      return address && typeof address !== "string" ? address.port : decoded.right.port
+    },
+    env,
+    logger,
+  })
+  const program = Layer.launch(appLayer(decoded.right, server, turns, logger)) as Effect.Effect<never, unknown, never>
   const fiber = Effect.runFork(program)
   const deadline = Date.now() + 5_000
   while (!server.listening && Date.now() < deadline) await Bun.sleep(10)
@@ -792,6 +842,7 @@ export async function startServer(input: ServerConfig): Promise<RunningServer> {
   return {
     port: address.port,
     close: async () => {
+      await turns.close()
       await Effect.runPromise(Fiber.interrupt(fiber))
     },
   }

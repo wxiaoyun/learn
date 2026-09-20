@@ -8,6 +8,7 @@ type StoredLog = ClientLogLine & { ts: string }
 type Message =
   | { type: "plan"; videoId: string }
   | { type: "outcome"; videoId: string; outcome: OutcomeInput }
+  | { type: "grade"; videoId: string; outcomeId: string }
   | { type: "log"; videoId?: string; line: ClientLogLine }
   | { type: "health" }
   | { type: "logs" }
@@ -70,7 +71,7 @@ async function request(
         ? String(data.error)
         : `HTTP ${response.status}`
       await log({ level: response.status === 404 ? "info" : "error", stage, target, status: String(response.status), error }, videoId)
-      return { ok: false, status: response.status, error }
+      return { ok: false, status: response.status, data, error }
     }
     await log({ level: "info", stage, target, status: "ok" }, videoId)
     return { ok: true, status: response.status, data }
@@ -92,6 +93,9 @@ async function handle(message: Message): Promise<unknown> {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(message.outcome),
     })
+  }
+  if (message.type === "grade") {
+    return request("fetch_grade", `/grades/${encodeURIComponent(message.outcomeId)}`, message.videoId)
   }
   if (message.type === "log") {
     await log(message.line, message.videoId)

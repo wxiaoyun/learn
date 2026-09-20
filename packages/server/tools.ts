@@ -28,6 +28,7 @@ export class ValidationError extends Data.TaggedError("ValidationError")<{
 
 export class NotFoundError extends Data.TaggedError("NotFoundError")<{
   readonly message: string
+  readonly details?: Record<string, unknown>
 }> {}
 
 export class ConflictError extends Data.TaggedError("ConflictError")<{
@@ -60,6 +61,7 @@ export interface LearningStoreService {
     courseId: string,
     grade: GradeOutcome,
   ) => Effect.Effect<unknown, AppError, ServerLogger>
+  readonly getGrade: (outcomeId: string) => Effect.Effect<GradeOutcome, AppError, ServerLogger>
   readonly quizPlanByVideo: (videoId: string) => Effect.Effect<unknown, AppError, ServerLogger>
 }
 

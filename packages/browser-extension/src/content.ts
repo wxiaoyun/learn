@@ -1,6 +1,6 @@
 import { parseQuizPlan, placementKey, selectQuestions, type ChoiceQuestion, type ClientLogLine, type GradedResult, type OutcomeInput, type Question, type QuizPlan } from "@learn/core"
 import katex from "katex"
-import { completedPlacementKeys, landedNodeIds, playbackStep, recapQuestionIds, timedPlacements, type PlacementOutcome } from "./playback-core"
+import { completedPlacementKeys, gradeToast, landedNodeIds, playbackStep, recapQuestionIds, timedPlacements, type PlacementOutcome } from "./playback-core"
 
 type ServerReply = { ok: boolean; status: number; data?: unknown; error?: string }
 type PlanReply = {
@@ -14,6 +14,7 @@ type PlanReply = {
   recentGradedResults: GradedResult[]
 }
 type QueuedQuestion = { id: string; placementIndex: number; placementKey: string; recap: boolean }
+type GradeReply = { judgment: "understood" | "partial" | "not-understood"; missing: string }
 
 const HOST_ID = "learning-youtube-surface"
 const style = `
@@ -146,6 +147,7 @@ class Session {
   private selectedIndex?: number
   private enterAction?: () => void
   private skipAction?: () => void
+  private destroyed = false
 
   constructor(
     readonly videoId: string,
@@ -171,6 +173,7 @@ class Session {
   }
 
   destroy(): void {
+    this.destroyed = true
     this.video.removeEventListener("timeupdate", this.onTimeUpdate)
     this.video.removeEventListener("seeking", this.onSeeking)
     this.video.removeEventListener("seeked", this.onSeeked)
@@ -499,7 +502,15 @@ class Session {
       ...(text !== undefined && { text }),
     }
     void send<ServerReply>({ type: "outcome", videoId: this.videoId, outcome }).then((response) => {
-      if (!response.ok) this.toast("Could not save your Outcome. The learning server may be unreachable.")
+      if (!response.ok) {
+        this.toast("Could not save your Outcome. The learning server may be unreachable.")
+        return
+      }
+      if (question.kind === "explain-back" && status === "ungraded") {
+        const data = response.data as { results?: Array<{ id?: unknown }> } | undefined
+        const outcomeId = data?.results?.[0]?.id
+        if (typeof outcomeId === "string") void this.pollGrade(outcomeId)
+      }
     }).catch((error) => {
       this.toast("Could not save your Outcome. The learning server may be unreachable.")
       log(this.videoId, {
@@ -510,6 +521,28 @@ class Session {
         error: error instanceof Error ? error.message : String(error),
       })
     })
+  }
+
+  private async pollGrade(outcomeId: string): Promise<void> {
+    for (let attempt = 0; attempt < 18; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5_000))
+      if (this.destroyed) return
+      const response = await send<ServerReply>({
+        type: "grade",
+        videoId: this.videoId,
+        outcomeId,
+      }).catch((): ServerReply => ({ ok: false, status: 0 }))
+      if (this.destroyed) return
+      if (response.ok && response.data && typeof response.data === "object") {
+        const value = response.data as Partial<GradeReply>
+        if ((value.judgment === "understood" || value.judgment === "partial" || value.judgment === "not-understood")
+          && typeof value.missing === "string") {
+          this.toast(gradeToast(value as GradeReply))
+          return
+        }
+      }
+    }
+    if (!this.destroyed) this.toast("your explanation will be graded at your next session")
   }
 
   private showReward(): void {
@@ -630,7 +663,19 @@ async function navigate(): Promise<void> {
   if (token !== navigation) return
   if (!response.ok) {
     if (response.status === 404) {
-      log(id, { level: "info", stage: "load_quiz_plan", target: id, status: "not_course_unit" })
+      const data = response.data as { courseVideo?: unknown; hint?: unknown } | undefined
+      if (data?.courseVideo === true && typeof data.hint === "string") {
+        log(id, { level: "info", stage: "load_quiz_plan", target: id, status: "missing_plan" })
+        const surface = makeSurface()
+        const toast = document.createElement("div")
+        toast.className = "toast"
+        toast.setAttribute("role", "status")
+        toast.textContent = data.hint
+        surface.root.append(toast)
+        setTimeout(() => surface.host.remove(), 7000)
+      } else {
+        log(id, { level: "info", stage: "load_quiz_plan", target: id, status: "not_course_unit" })
+      }
       return
     }
     const surface = makeSurface()

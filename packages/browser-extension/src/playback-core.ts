@@ -1,4 +1,4 @@
-import { placementKey, type OutcomeInput, type Placement, type QuizPlan } from "@learn/core"
+import { placementKey, type GradeOutcome, type OutcomeInput, type Placement, type QuizPlan } from "@learn/core"
 
 export type TimedPlacement = {
   index: number
@@ -125,4 +125,11 @@ export function landedNodeIds(plan: QuizPlan, correctQuestionIds: ReadonlySet<st
   return new Set(plan.questionPool
     .filter((question) => question.tier === "application" && correctQuestionIds.has(question.id))
     .map((question) => question.nodeId))
+}
+
+export function gradeToast(grade: Pick<GradeOutcome, "judgment" | "missing">): string {
+  const judgment = grade.judgment === "understood"
+    ? "Understood"
+    : grade.judgment === "partial" ? "Partly understood" : "Not understood"
+  return `${judgment}. ${grade.missing}`
 }

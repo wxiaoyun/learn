@@ -32,6 +32,9 @@ if (action === "install") {
     LEARNING_ROOT: root,
     LEARNING_PORT: process.env.LEARNING_PORT?.trim() || "4517",
     LEARNING_ALLOWED_ORIGINS: process.env.LEARNING_ALLOWED_ORIGINS ?? "",
+    LEARNING_AGENT: process.env.LEARNING_AGENT?.trim() || "claude",
+    LEARNING_AGENT_TIMEOUT_MS: process.env.LEARNING_AGENT_TIMEOUT_MS?.trim() || "300000",
+    PATH: process.env.PATH?.trim() || "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
   }
   const variables = Object.entries(environment)
     .map(([key, value]) => `      <key>${xml(key)}</key>\n      <string>${xml(value)}</string>`)

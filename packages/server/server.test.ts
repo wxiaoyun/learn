@@ -72,7 +72,14 @@ async function putTool(name: string, body: unknown) {
 
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "learn-server-"))
-  running = await startServer({ root, port: 0, allowedOrigins: ["chrome-extension://allowed"] })
+  running = await startServer({
+    root,
+    port: 0,
+    allowedOrigins: ["chrome-extension://allowed"],
+    agent: "off",
+    agentTimeoutMs: 300_000,
+    recapDebounceMs: 20_000,
+  })
   base = `http://127.0.0.1:${running.port}`
 })
 
