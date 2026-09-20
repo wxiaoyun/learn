@@ -11,6 +11,7 @@ const result = await Bun.build({
   entrypoints: [
     join(root, "src/background.ts"),
     join(root, "src/content.ts"),
+    join(root, "src/key-guard.ts"),
     join(root, "src/popup.ts"),
     join(root, "src/review.ts"),
   ],

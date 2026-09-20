@@ -1,6 +1,6 @@
 import { parseQuizPlan, placementKey, selectQuestions, type Answer, type Ask, type AskInput, type ChoiceQuestion, type ClientLogLine, type GradedResult, type OutcomeInput, type Question, type QuizPlan } from "@learn/core"
 import katex from "katex"
-import { askPollDecision, formatVideoTime, opensAskPanel } from "./ask-core"
+import { askPollDecision, formatVideoTime, learningKeyDecision, type LearningKeyAction } from "./ask-core"
 import { completedPlacementKeys, gradeToast, landedNodeIds, playbackStep, recapQuestionIds, timedPlacements, type PlacementOutcome } from "./playback-core"
 
 type ServerReply = { ok: boolean; status: number; data?: unknown; error?: string }
@@ -41,7 +41,10 @@ const style = `
   textarea { width: 100%; min-height: 150px; resize: vertical; border: 1px solid #71717a; border-radius: 8px; padding: 10px; color: inherit; background: #fff; font: inherit; }
   .hint { color: #52525b; font-size: 13px; }
   .toast { position: fixed; z-index: 2147483647; right: 20px; bottom: 24px; max-width: min(460px, calc(100vw - 40px)); border-radius: 9px; padding: 12px 15px; color: #fff; background: #27272a; box-shadow: 0 5px 20px rgb(0 0 0 / 40%); font: 14px/1.4 system-ui, sans-serif; pointer-events: auto; }
-  .reward { position: fixed; z-index: 2147483645; top: 72px; right: 18px; width: 190px; border-radius: 9px; padding: 10px 12px; color: #fff; background: rgb(24 24 27 / 92%); box-shadow: 0 3px 14px rgb(0 0 0 / 35%); font: 13px/1.3 system-ui, sans-serif; pointer-events: none; }
+  .reward { position: fixed; z-index: 2147483645; top: 72px; right: 18px; width: 190px; border-radius: 9px; padding: 10px 12px; color: #fff; background: rgb(24 24 27 / 92%); box-shadow: 0 3px 14px rgb(0 0 0 / 35%); font: 13px/1.3 system-ui, sans-serif; pointer-events: auto; }
+  .reward-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  button.log-copy { border: 0; padding: 0; color: #bfdbfe; background: transparent; font-size: 11px; white-space: nowrap; }
+  button.log-copy:hover { color: #fff; background: transparent; text-decoration: underline; }
   .ask-panel { position: fixed; z-index: 2147483647; top: 70px; right: 16px; width: min(390px, calc(100vw - 32px)); max-height: calc(100vh - 100px); overflow: auto; border: 1px solid #52525b; border-radius: 12px; padding: 16px; color: #18181b; background: #fff; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); font: 15px/1.45 system-ui, sans-serif; pointer-events: auto; }
   .ask-panel h2 { margin-right: 44px; }
   .ask-close { position: absolute; top: 10px; right: 10px; padding: 5px 9px; }
@@ -63,12 +66,25 @@ const style = `
   }
 `
 
+function containSurfacePointerEvents(root: ShadowRoot): void {
+  for (const type of ["click", "dblclick", "mousedown", "mouseup", "pointerdown", "pointerup", "contextmenu"]) {
+    root.addEventListener(type, (event) => event.stopPropagation())
+  }
+  root.addEventListener("wheel", (event) => {
+    if (event.composedPath().some((value) =>
+      value instanceof HTMLElement && (value.classList.contains("dialog") || value.classList.contains("ask-panel")))) {
+      event.stopPropagation()
+    }
+  })
+}
+
 function makeSurface(): { host: HTMLElement; root: ShadowRoot } {
   document.getElementById(HOST_ID)?.remove()
   const host = document.createElement("div")
   host.id = HOST_ID
   host.style.cssText = "all:initial;position:fixed;inset:0;z-index:2147483645;pointer-events:none"
   const root = host.attachShadow({ mode: "open" })
+  containSurfacePointerEvents(root)
   const sheet = document.createElement("style")
   sheet.textContent = style
   const katexSheet = document.createElement("link")
@@ -141,6 +157,7 @@ function makeAskSurface(): { host: HTMLElement; root: ShadowRoot } {
   host.id = ASK_HOST_ID
   host.style.cssText = "all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none"
   const root = host.attachShadow({ mode: "open" })
+  containSurfacePointerEvents(root)
   const sheet = document.createElement("style")
   sheet.textContent = style
   const katexSheet = document.createElement("link")
@@ -189,18 +206,29 @@ class AskSession {
     this.host = surface.host
     this.root = surface.root
     this.items = [...reply.asks]
-    window.addEventListener("keydown", this.onKeyDown, true)
   }
 
   destroy(): void {
     this.destroyed = true
-    window.removeEventListener("keydown", this.onKeyDown, true)
     if (this.toastTimer) clearTimeout(this.toastTimer)
     this.host.remove()
   }
 
-  private quizOpen(): boolean {
-    return !!document.getElementById(HOST_ID)?.shadowRoot?.querySelector(".backdrop")
+  isOpen(): boolean {
+    return this.panel !== undefined
+  }
+
+  hasTextFocus(): boolean {
+    return this.root.activeElement instanceof HTMLTextAreaElement
+  }
+
+  handleKey(action: LearningKeyAction): void {
+    if (action === "open-ask") this.open()
+    else if (action === "ask-close") this.close()
+    else if (action === "ask-submit") {
+      const textarea = this.root.activeElement
+      if (textarea instanceof HTMLTextAreaElement) void this.submit(textarea)
+    }
   }
 
   private open(): void {
@@ -371,36 +399,6 @@ class AskSession {
     this.toastTimer = setTimeout(() => toast.remove(), 7_000)
   }
 
-  private onKeyDown = (event: KeyboardEvent): void => {
-    const target = event.composedPath()[0]
-    const element = target instanceof Element ? target : undefined
-    const typing = !!element?.closest("input, textarea, [contenteditable]")
-    if (!this.panel) {
-      if (!opensAskPanel({
-        key: event.key,
-        altKey: event.altKey,
-        ctrlKey: event.ctrlKey,
-        metaKey: event.metaKey,
-        shiftKey: event.shiftKey,
-        typing,
-        quizOpen: this.quizOpen(),
-      })) return
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      this.open()
-      return
-    }
-    event.stopImmediatePropagation()
-    if (event.key === "Escape") {
-      event.preventDefault()
-      this.close()
-      return
-    }
-    if (event.key === "Enter" && !event.shiftKey && target instanceof HTMLTextAreaElement) {
-      event.preventDefault()
-      void this.submit(target)
-    }
-  }
 }
 
 class Session {
@@ -444,7 +442,6 @@ class Session {
     video.addEventListener("seeked", this.onSeeked)
     video.addEventListener("play", this.onPlay)
     video.addEventListener("ended", this.onEnded)
-    window.addEventListener("keydown", this.onKeyDown, true)
     if (!video.paused) this.onPlay()
   }
 
@@ -455,9 +452,42 @@ class Session {
     this.video.removeEventListener("seeked", this.onSeeked)
     this.video.removeEventListener("play", this.onPlay)
     this.video.removeEventListener("ended", this.onEnded)
-    window.removeEventListener("keydown", this.onKeyDown, true)
     if (this.toastTimer) clearTimeout(this.toastTimer)
     this.host.remove()
+  }
+
+  isQuizOpen(): boolean {
+    return this.overlay !== undefined
+  }
+
+  hasTextFocus(): boolean {
+    return this.root.activeElement instanceof HTMLTextAreaElement
+  }
+
+  handleKey(action: LearningKeyAction, event: KeyboardEvent): void {
+    if (!this.overlay) return
+    if (action === "quiz-skip") this.skipAction?.()
+    else if (action === "quiz-option") {
+      const options = [...this.overlay.querySelectorAll<HTMLButtonElement>(".options button")]
+      options[Number(event.key) - 1]?.click()
+    } else if (action === "quiz-enter") this.enterAction?.()
+    else if (action === "quiz-tab") this.trapTab(event)
+  }
+
+  private trapTab(event: KeyboardEvent): void {
+    const dialog = this.overlay?.querySelector<HTMLElement>(".dialog")
+    if (!dialog) return
+    const focusable = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled]), textarea:not([disabled])")]
+    if (focusable.length === 0) return
+    const first = focusable[0]
+    const last = focusable.at(-1)!
+    if (event.shiftKey && this.root.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && this.root.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
   }
 
   private onSeeking = (): void => {
@@ -821,6 +851,18 @@ class Session {
     if (!this.destroyed) this.toast("your explanation will be graded at your next session")
   }
 
+  private async copyLogs(): Promise<void> {
+    try {
+      const logs = await send<unknown>({ type: "logs" })
+      await navigator.clipboard.writeText((Array.isArray(logs) ? logs : [])
+        .map((line) => JSON.stringify(line))
+        .join("\n"))
+      this.toast("logs copied")
+    } catch {
+      this.toast("copy failed")
+    }
+  }
+
   private showReward(): void {
     this.root.querySelector(".reward")?.remove()
     const landed = landedNodeIds(this.reply.plan, this.correct).size
@@ -828,15 +870,19 @@ class Session {
     const reward = document.createElement("div")
     reward.className = "reward"
     reward.setAttribute("role", "status")
+    const header = document.createElement("div")
+    header.className = "reward-head"
     const label = document.createElement("div")
     label.textContent = `${landed} of ${total} Nodes landed`
+    const copy = this.button("Copy logs", () => void this.copyLogs(), "log-copy")
+    header.append(label, copy)
     const track = document.createElement("div")
     track.className = "track"
     const fill = document.createElement("div")
     fill.className = "fill"
     fill.style.width = `${total ? landed / total * 100 : 0}%`
     track.append(fill)
-    reward.append(label, track)
+    reward.append(header, track)
     this.root.append(reward)
   }
 
@@ -860,50 +906,42 @@ class Session {
     return button
   }
 
-  private onKeyDown = (event: KeyboardEvent): void => {
-    if (!this.overlay) return
-    const dialog = this.overlay.querySelector<HTMLElement>(".dialog")
-    if (!dialog) return
-    const target = event.composedPath()[0]
-    const typing = target instanceof HTMLTextAreaElement
-    if (event.key === "Escape") {
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      this.skipAction?.()
-      return
-    }
-    if (/^[1-9]$/.test(event.key) && !typing) {
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      const options = [...dialog.querySelectorAll<HTMLButtonElement>(".options button")]
-      options[Number(event.key) - 1]?.click()
-      return
-    }
-    if (event.key === "Enter" && (!typing || !event.shiftKey)) {
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      this.enterAction?.()
-      return
-    }
-    if (event.key !== "Tab") return
-    const focusable = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled]), textarea:not([disabled])")]
-    if (focusable.length === 0) return
-    const first = focusable[0]
-    const last = focusable.at(-1)!
-    if (event.shiftKey && this.root.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && this.root.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
 }
 
 let active: Session | undefined
 let activeAsk: AskSession | undefined
 let navigation = 0
 let lastUrl = ""
+
+type LearningKeyboardGlobal = typeof globalThis & {
+  __learningKeyboardDispatch?: (event: KeyboardEvent, pathContainsHost: boolean) => boolean
+}
+
+const learningKeyboardGlobal = globalThis as LearningKeyboardGlobal
+learningKeyboardGlobal.__learningKeyboardDispatch = (event, pathContainsHost) => {
+  const target = event.composedPath()[0]
+  const element = target instanceof Element ? target : undefined
+  const askOpen = activeAsk?.isOpen() ?? false
+  const quizOpen = active?.isQuizOpen() ?? false
+  const decision = learningKeyDecision({
+    eventType: event.type as "keydown" | "keypress" | "keyup",
+    key: event.key,
+    altKey: event.altKey,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    shiftKey: event.shiftKey,
+    typing: !!element?.closest("input, textarea, [contenteditable]"),
+    quizOpen,
+    pathContainsHost,
+    textFieldFocused: askOpen ? activeAsk!.hasTextFocus() : active?.hasTextFocus() ?? false,
+    ui: askOpen ? "ask" : quizOpen ? "quiz" : "none",
+    askAvailable: activeAsk !== undefined,
+  })
+  if (decision.action !== "none" && decision.action !== "quiz-tab") event.preventDefault()
+  if (decision.action.startsWith("ask") || decision.action === "open-ask") activeAsk?.handleKey(decision.action)
+  else active?.handleKey(decision.action, event)
+  return decision.contain
+}
 
 function videoId(): string | undefined {
   const url = new URL(location.href)
