@@ -1,6 +1,8 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"
 import type { TSchema } from "@sinclair/typebox"
-import { agentTools } from "../../server/tools"
+import { realpathSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 const port = process.env.LEARNING_PORT?.trim() || "4517"
 const server = `http://127.0.0.1:${port}`
@@ -17,7 +19,12 @@ function log(stage: string, target: string, status: string, error?: string): voi
   }))
 }
 
-export default function learningTools(pi: ExtensionAPI) {
+export default async function learningTools(pi: ExtensionAPI) {
+  // pi usually loads this file through a symlinked .pi directory. A static
+  // relative import would resolve against the link, not the repo, so resolve
+  // the real file first and import the tool definitions from there.
+  const here = dirname(realpathSync(fileURLToPath(import.meta.url)))
+  const { agentTools } = await import(join(here, "../../server/tools.ts")) as typeof import("../../server/tools")
   for (const tool of agentTools) {
     pi.registerTool({
       name: tool.name,
