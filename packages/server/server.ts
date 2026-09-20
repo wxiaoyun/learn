@@ -1,12 +1,15 @@
 import { McpServer } from "@effect/ai"
 import {
+  AskInputSchema,
   ClientLogsSchema,
   OutcomeInputSchema,
   SlugSchema,
+  createAskId,
   createOutcomeId,
   deriveDailyStreak,
   deriveReviewStates,
   formatLog,
+  parseAsks,
   parseNodes,
   parseOutcomes,
   parseQuizPlan,
@@ -16,6 +19,9 @@ import {
   serializeQuizPlan,
   serializeRoadmap,
   selectReviewQuestion,
+  type Answer,
+  type Ask,
+  type AskRecord,
   type ClientLogs,
   type GradeOutcome,
   type Nodes,
@@ -25,7 +31,9 @@ import {
   type Roadmap,
 } from "@learn/core"
 import {
+  appendAsk as appendAskFile,
   appendOutcome as appendOutcomeFile,
+  asksPath,
   getLearningRoot,
   nodesPath,
   outcomesPath,
@@ -81,6 +89,7 @@ const ServerConfigSchema = Schema.Struct({
 })
 const VideoParamsSchema = Schema.Struct({ videoId: Schema.String.pipe(Schema.minLength(1)) })
 const GradeParamsSchema = Schema.Struct({ outcomeId: Schema.String.pipe(Schema.minLength(1)) })
+const AskParamsSchema = Schema.Struct({ askId: Schema.String.pipe(Schema.minLength(1)) })
 const ToolParamsSchema = Schema.Struct({ name: Schema.String.pipe(Schema.minLength(1)) })
 const ReviewQuerySchema = Schema.Struct({ courseId: Schema.optional(SlugSchema) })
 const OutcomesBodySchema = Schema.Union(OutcomeInputSchema, Schema.Array(OutcomeInputSchema).pipe(Schema.minItems(1)))
@@ -292,6 +301,12 @@ function makeStore(root: string, turns: AgentTurns): LearningStoreService {
     return yield* decodeFile("decode_outcomes", file, () => parseOutcomes(text, file))
   })
 
+  const getAsks = (courseId: string) => Effect.gen(function*() {
+    const file = asksPath(root, courseId)
+    const text = (yield* readOptional(file)) ?? ""
+    return yield* decodeFile("decode_asks", file, () => parseAsks(text, file))
+  })
+
   const getNodes = (courseId: string) => Effect.gen(function*() {
     const file = nodesPath(root, courseId)
     const text = yield* readOptional(file)
@@ -324,6 +339,26 @@ function makeStore(root: string, turns: AgentTurns): LearningStoreService {
       ? { ...record, tier: tiers.get(`${record.unitId}:${record.questionId}`) }
       : record)
   }
+
+  const appendAskRecord = (courseId: string, record: AskRecord) => Effect.gen(function*() {
+    const file = asksPath(root, courseId)
+    const logger = yield* ServerLogger
+    yield* logger.write("info", "file_write", { target: file, status: "start" })
+    return yield* Effect.tryPromise({
+      try: () => queuedAppend(() => appendAskFile(file, record)),
+      catch: (error) => new StorageError({
+        message: `${file}: ${error instanceof Error ? error.message : String(error)}`,
+      }),
+    }).pipe(
+      Effect.tap((status) => logger.write("info", "file_write", { target: file, status })),
+      Effect.tapError((error) => logger.write("error", "file_write", {
+        target: file,
+        status: "failed",
+        error: error.message,
+      })),
+      Effect.map((status) => ({ status, id: record.id })),
+    )
+  })
 
   const append = (courseId: string, record: OutcomeRecord) => Effect.gen(function*() {
     const file = outcomesPath(root, courseId)
@@ -359,6 +394,10 @@ function makeStore(root: string, turns: AgentTurns): LearningStoreService {
       const nodes = yield* getNodes(courseId)
       const plans = yield* getPlans(roadmap)
       const outcomes = withResolvedTiers(yield* getOutcomes(courseId), plans)
+      const asks = yield* getAsks(courseId)
+      const askValues = asks.filter((record): record is Ask => record.type === "ask")
+      const askById = new Map(askValues.map((ask) => [ask.id, ask]))
+      const answers = asks.filter((record): record is Answer => record.type === "answer")
       const outcomeValues = outcomes.filter((record): record is Outcome => record.type === "outcome")
       const reviews = new Map(deriveReviewStates(outcomes, new Date().toISOString())
         .map((review) => [review.nodeId, review]))
@@ -377,9 +416,17 @@ function makeStore(root: string, turns: AgentTurns): LearningStoreService {
           if (outcome.tier) counts[outcome.tier][outcome.status] += 1
         }
         const review = reviews.get(node.id)
+        const nodeAsks = answers
+          .filter((answer) => answer.nodeIds.includes(node.id))
+          .flatMap((answer) => {
+            const ask = askById.get(answer.askId)
+            return ask ? [ask] : []
+          })
         return {
           nodeId: node.id,
           counts,
+          askCount: nodeAsks.length,
+          latestAskAt: nodeAsks.map((ask) => ask.askedAt).sort().at(-1) ?? null,
           latestOutcomeAt: latest(values),
           latestCorrectApplicationAt: latest(values.filter((outcome) =>
             outcome.status === "correct" && outcome.tier === "application")),
@@ -396,6 +443,14 @@ function makeStore(root: string, turns: AgentTurns): LearningStoreService {
           outcome.status === "ungraded"
           && !outcomes.some((record) => record.type === "grade" && record.outcomeId === outcome.id)),
         flaggedQuestions: outcomeValues.filter((outcome) => outcome.status === "flagged"),
+        recentAsks: askValues
+          .flatMap((ask) => {
+            const answer = answers.find((candidate) => candidate.askId === ask.id)
+            return answer ? [{ ask, answer }] : []
+          })
+          .sort((left, right) => Date.parse(left.ask.askedAt) - Date.parse(right.ask.askedAt))
+          .slice(-20),
+        unansweredAsks: askValues.filter((ask) => !answers.some((answer) => answer.askId === ask.id)),
       }
     }),
     getDueReviews: (courseId) => Effect.gen(function*() {
@@ -507,6 +562,68 @@ function makeStore(root: string, turns: AgentTurns): LearningStoreService {
         : record.gradedAt === undefined || Date.parse(record.gradedAt) >= sinceTime)
     }),
     appendOutcome: (outcome) => append(outcome.courseId, outcome),
+    appendAsk: (ask) => Effect.gen(function*() {
+      const file = roadmapPath(root, ask.courseId)
+      const text = yield* requireFile(file)
+      const courseRoadmap = yield* decodeFile("decode_roadmap", file, () => parseRoadmap(text, file))
+      const unit = courseRoadmap.units.find((candidate) => candidate.id === ask.unitId)
+      if (!unit || unit.kind !== "youtube-video") {
+        return yield* new ValidationError({
+          message: `Ask unit "${ask.unitId}" is not a Roadmap video Unit of Course "${ask.courseId}"`,
+        })
+      }
+      if (ask.location.anchor.kind !== "video-timestamp") {
+        return yield* new ValidationError({ message: "Ask location must be a video timestamp" })
+      }
+      return yield* appendAskRecord(ask.courseId, ask)
+    }),
+    appendAnswer: (courseId, answer) => Effect.gen(function*() {
+      const askHistory = yield* getAsks(courseId)
+      const ask = askHistory.find((record): record is Ask => record.type === "ask" && record.id === answer.askId)
+      if (!ask) {
+        return yield* new NotFoundError({ message: `no Ask "${answer.askId}" exists in Course "${courseId}"` })
+      }
+      const existing = askHistory.find((record): record is Answer => record.type === "answer" && record.askId === answer.askId)
+      if (existing) return { status: "duplicate", id: existing.id }
+      const nodes = yield* getNodes(courseId)
+      const nodeIds = new Set(nodes.map((node) => node.id))
+      const unknown = answer.nodeIds.find((nodeId) => !nodeIds.has(nodeId))
+      if (unknown) {
+        return yield* new ValidationError({
+          message: `answer_ask: Node id "${unknown}" does not exist in Course "${courseId}"`,
+        })
+      }
+      return yield* appendAskRecord(courseId, answer)
+    }),
+    getAsk: (askId) => Effect.gen(function*() {
+      for (const courseId of yield* courseIds(root)) {
+        const history = yield* getAsks(courseId)
+        const ask = history.find((record): record is Ask => record.type === "ask" && record.id === askId)
+        if (!ask) continue
+        const answer = history.find((record): record is Answer => record.type === "answer" && record.askId === askId)
+        return { ask, answer: answer ?? null, failed: !answer && turns.askFailed(askId) }
+      }
+      return yield* new NotFoundError({ message: `no Ask exists with id "${askId}"` })
+    }),
+    asksByVideo: (videoId) => Effect.gen(function*() {
+      for (const courseRoadmap of yield* roadmaps(root)) {
+        const unit = courseRoadmap.units.find((candidate) =>
+          candidate.kind === "youtube-video" && candidate.source.videoId === videoId)
+        if (!unit) continue
+        const history = yield* getAsks(courseRoadmap.courseId)
+        const answers = history.filter((record): record is Answer => record.type === "answer")
+        const asks = history
+          .filter((record): record is Ask => record.type === "ask" && record.unitId === unit.id)
+          .sort((left, right) => Date.parse(left.askedAt) - Date.parse(right.askedAt))
+          .map((ask) => ({
+            ask,
+            answer: answers.find((answer) => answer.askId === ask.id) ?? null,
+            failed: !answers.some((answer) => answer.askId === ask.id) && turns.askFailed(ask.id),
+          }))
+        return { courseId: courseRoadmap.courseId, unitId: unit.id, asks }
+      }
+      return yield* new NotFoundError({ message: `no Course video exists for video ID "${videoId}"` })
+    }),
     appendGrade: (courseId, grade: GradeOutcome) => append(courseId, grade),
     getGrade: (outcomeId) => Effect.gen(function*() {
       for (const courseId of yield* courseIds(root)) {
@@ -666,6 +783,16 @@ function routes(turns: AgentTurns) {
       const { videoId } = yield* decodeHttp("decode_path", "/quiz-plans/by-video/:videoId", VideoParamsSchema, params)
       return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.quizPlanByVideo(videoId)))
     }))),
+    router.get("/asks/by-video/:videoId", handled(Effect.gen(function*() {
+      const params = yield* HttpRouter.params
+      const { videoId } = yield* decodeHttp("decode_path", "/asks/by-video/:videoId", VideoParamsSchema, params)
+      return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.asksByVideo(videoId)))
+    }))),
+    router.get("/asks/:askId", handled(Effect.gen(function*() {
+      const params = yield* HttpRouter.params
+      const { askId } = yield* decodeHttp("decode_path", "/asks/:askId", AskParamsSchema, params)
+      return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.getAsk(askId)))
+    }))),
     router.get("/grades/:outcomeId", handled(Effect.gen(function*() {
       const params = yield* HttpRouter.params
       const { outcomeId } = yield* decodeHttp("decode_path", "/grades/:outcomeId", GradeParamsSchema, params)
@@ -676,6 +803,17 @@ function routes(turns: AgentTurns) {
       const query = Object.fromEntries(new URL(request.url, "http://127.0.0.1").searchParams)
       const { courseId } = yield* decodeHttp("decode_query", "/reviews/due", ReviewQuerySchema, query)
       return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.getDueReviews(courseId)))
+    }))),
+    router.post("/asks", handled(Effect.gen(function*() {
+      if (!turns.asksEnabled()) {
+        return HttpServerResponse.unsafeJson({ error: "asks are disabled because the learning agent is off" }, { status: 503 })
+      }
+      const input = yield* body("decode_ask_body", AskInputSchema)
+      const ask: Ask = { ...input, id: createAskId(input) }
+      const store = yield* LearningStore
+      const result = yield* store.appendAsk(ask)
+      if ((result as { status?: string }).status === "appended") turns.handleAsk(ask)
+      return HttpServerResponse.unsafeJson(result)
     }))),
     router.post("/outcomes", handled(Effect.gen(function*() {
       const decoded = yield* body("decode_outcomes_body", OutcomesBodySchema)

@@ -1,5 +1,6 @@
-import { parseQuizPlan, placementKey, selectQuestions, type ChoiceQuestion, type ClientLogLine, type GradedResult, type OutcomeInput, type Question, type QuizPlan } from "@learn/core"
+import { parseQuizPlan, placementKey, selectQuestions, type Answer, type Ask, type AskInput, type ChoiceQuestion, type ClientLogLine, type GradedResult, type OutcomeInput, type Question, type QuizPlan } from "@learn/core"
 import katex from "katex"
+import { askPollDecision, formatVideoTime, opensAskPanel } from "./ask-core"
 import { completedPlacementKeys, gradeToast, landedNodeIds, playbackStep, recapQuestionIds, timedPlacements, type PlacementOutcome } from "./playback-core"
 
 type ServerReply = { ok: boolean; status: number; data?: unknown; error?: string }
@@ -15,8 +16,11 @@ type PlanReply = {
 }
 type QueuedQuestion = { id: string; placementIndex: number; placementKey: string; recap: boolean }
 type GradeReply = { judgment: "understood" | "partial" | "not-understood"; missing: string }
+type AskHistoryItem = { ask: Ask; answer: Answer | null; failed: boolean }
+type AskHistoryReply = { courseId: string; unitId: string; asks: AskHistoryItem[] }
 
 const HOST_ID = "learning-youtube-surface"
+const ASK_HOST_ID = "learning-youtube-asks"
 const style = `
   :host { all: initial; color-scheme: light dark; font-family: system-ui, sans-serif; }
   * { box-sizing: border-box; }
@@ -38,10 +42,19 @@ const style = `
   .hint { color: #52525b; font-size: 13px; }
   .toast { position: fixed; z-index: 2147483647; right: 20px; bottom: 24px; max-width: min(460px, calc(100vw - 40px)); border-radius: 9px; padding: 12px 15px; color: #fff; background: #27272a; box-shadow: 0 5px 20px rgb(0 0 0 / 40%); font: 14px/1.4 system-ui, sans-serif; pointer-events: auto; }
   .reward { position: fixed; z-index: 2147483645; top: 72px; right: 18px; width: 190px; border-radius: 9px; padding: 10px 12px; color: #fff; background: rgb(24 24 27 / 92%); box-shadow: 0 3px 14px rgb(0 0 0 / 35%); font: 13px/1.3 system-ui, sans-serif; pointer-events: none; }
+  .ask-panel { position: fixed; z-index: 2147483647; top: 70px; right: 16px; width: min(390px, calc(100vw - 32px)); max-height: calc(100vh - 100px); overflow: auto; border: 1px solid #52525b; border-radius: 12px; padding: 16px; color: #18181b; background: #fff; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); font: 15px/1.45 system-ui, sans-serif; pointer-events: auto; }
+  .ask-panel h2 { margin-right: 44px; }
+  .ask-close { position: absolute; top: 10px; right: 10px; padding: 5px 9px; }
+  .ask-history { display: grid; gap: 12px; margin-bottom: 14px; }
+  .ask-item { border-top: 1px solid #d4d4d8; padding-top: 10px; }
+  .ask-time { border: 0; padding: 0; color: #2563eb; background: transparent; font-size: 13px; }
+  .ask-text, .answer-text { margin-top: 6px; white-space: pre-wrap; }
+  .answer-text { border-left: 3px solid #22c55e; padding-left: 9px; }
+  .ask-status { margin: 10px 0; font-weight: 650; }
   .track { height: 6px; margin-top: 7px; overflow: hidden; border-radius: 999px; background: #52525b; }
   .fill { height: 100%; background: #22c55e; }
   @media (prefers-color-scheme: dark) {
-    .dialog { color: #fafafa; background: #18181b; }
+    .dialog, .ask-panel { color: #fafafa; background: #18181b; }
     button { background: #27272a; }
     button:hover { background: #3f3f46; }
     button.selected { border-color: #60a5fa; background: #1e3a5f; }
@@ -87,11 +100,6 @@ function renderText(element: HTMLElement, text: string): void {
   element.append(document.createTextNode(text.slice(offset)))
 }
 
-function formatTime(seconds: number): string {
-  const whole = Math.floor(seconds)
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`
-}
-
 async function send<T>(message: unknown): Promise<T> {
   return chrome.runtime.sendMessage(message) as Promise<T>
 }
@@ -124,6 +132,274 @@ function decodePlan(data: unknown): PlanReply | undefined {
     recentGradedResults: Array.isArray(value.recentGradedResults)
       ? value.recentGradedResults.filter((result): result is GradedResult => result === "correct" || result === "wrong")
       : [],
+  }
+}
+
+function makeAskSurface(): { host: HTMLElement; root: ShadowRoot } {
+  document.getElementById(ASK_HOST_ID)?.remove()
+  const host = document.createElement("div")
+  host.id = ASK_HOST_ID
+  host.style.cssText = "all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none"
+  const root = host.attachShadow({ mode: "open" })
+  const sheet = document.createElement("style")
+  sheet.textContent = style
+  const katexSheet = document.createElement("link")
+  katexSheet.rel = "stylesheet"
+  katexSheet.href = chrome.runtime.getURL("katex.min.css")
+  root.append(sheet, katexSheet)
+  document.documentElement.append(host)
+  return { host, root }
+}
+
+function decodeAskHistory(data: unknown): AskHistoryReply | undefined {
+  if (!data || typeof data !== "object") return undefined
+  const value = data as Record<string, unknown>
+  if (typeof value.courseId !== "string" || typeof value.unitId !== "string" || !Array.isArray(value.asks)) return undefined
+  const asks = value.asks.filter((item): item is AskHistoryItem => {
+    if (!item || typeof item !== "object") return false
+    const record = item as Partial<AskHistoryItem>
+    return !!record.ask
+      && typeof record.ask.id === "string"
+      && typeof record.ask.text === "string"
+      && typeof record.ask.askedAt === "string"
+      && typeof record.failed === "boolean"
+      && (record.answer === null || typeof record.answer?.text === "string")
+  })
+  if (asks.length !== value.asks.length) return undefined
+  return { courseId: value.courseId, unitId: value.unitId, asks }
+}
+
+class AskSession {
+  private readonly host: HTMLElement
+  private readonly root: ShadowRoot
+  private items: AskHistoryItem[]
+  private panel?: HTMLElement
+  private openedAt = 0
+  private pendingAskId?: string
+  private status?: string
+  private destroyed = false
+  private toastTimer?: ReturnType<typeof setTimeout>
+
+  constructor(
+    readonly videoId: string,
+    readonly reply: AskHistoryReply,
+    readonly video: HTMLVideoElement,
+  ) {
+    const surface = makeAskSurface()
+    this.host = surface.host
+    this.root = surface.root
+    this.items = [...reply.asks]
+    window.addEventListener("keydown", this.onKeyDown, true)
+  }
+
+  destroy(): void {
+    this.destroyed = true
+    window.removeEventListener("keydown", this.onKeyDown, true)
+    if (this.toastTimer) clearTimeout(this.toastTimer)
+    this.host.remove()
+  }
+
+  private quizOpen(): boolean {
+    return !!document.getElementById(HOST_ID)?.shadowRoot?.querySelector(".backdrop")
+  }
+
+  private open(): void {
+    this.openedAt = this.video.currentTime
+    this.video.pause()
+    this.renderPanel()
+  }
+
+  private close(): void {
+    this.panel?.remove()
+    this.panel = undefined
+    this.video.focus()
+  }
+
+  private renderPanel(): void {
+    this.panel?.remove()
+    const panel = document.createElement("section")
+    panel.className = "ask-panel"
+    panel.setAttribute("role", "dialog")
+    panel.setAttribute("aria-label", "Ask the learning agent")
+    const title = document.createElement("h2")
+    title.textContent = "Ask"
+    const close = document.createElement("button")
+    close.type = "button"
+    close.className = "ask-close"
+    close.textContent = "Close"
+    close.addEventListener("click", () => this.close())
+    const history = document.createElement("div")
+    history.className = "ask-history"
+    for (const item of this.items) {
+      const card = document.createElement("div")
+      card.className = "ask-item"
+      const timestamp = document.createElement("button")
+      timestamp.type = "button"
+      timestamp.className = "ask-time"
+      const seconds = item.ask.location.anchor.kind === "video-timestamp"
+        ? item.ask.location.anchor.seconds
+        : 0
+      timestamp.textContent = formatVideoTime(seconds)
+      timestamp.addEventListener("click", () => { this.video.currentTime = seconds })
+      const askText = document.createElement("div")
+      askText.className = "ask-text"
+      askText.textContent = item.ask.text
+      const answerText = document.createElement("div")
+      answerText.className = "answer-text"
+      if (item.answer) renderText(answerText, item.answer.text)
+      else answerText.textContent = item.ask.id === this.pendingAskId
+        ? "thinking"
+        : "no answer this time, it is saved for your next session"
+      card.append(timestamp, askText, answerText)
+      history.append(card)
+    }
+    panel.append(title, close, history)
+    if (this.status) {
+      const status = document.createElement("div")
+      status.className = "ask-status"
+      status.setAttribute("role", "status")
+      status.textContent = this.status
+      panel.append(status)
+    }
+    if (!this.pendingAskId) {
+      const textarea = document.createElement("textarea")
+      textarea.setAttribute("aria-label", "Ask")
+      textarea.placeholder = "Ask about what you are watching"
+      const hint = document.createElement("p")
+      hint.className = "hint"
+      hint.textContent = "Enter submits. Shift+Enter adds a new line."
+      panel.append(textarea, hint)
+      queueMicrotask(() => textarea.focus())
+    }
+    this.root.append(panel)
+    this.panel = panel
+  }
+
+  private async submit(textarea: HTMLTextAreaElement): Promise<void> {
+    const text = textarea.value.trim()
+    if (!text || this.pendingAskId) return
+    const input: AskInput = {
+      type: "ask",
+      courseId: this.reply.courseId,
+      unitId: this.reply.unitId,
+      location: {
+        unitId: this.reply.unitId,
+        anchor: { kind: "video-timestamp", seconds: this.openedAt },
+      },
+      text,
+      surface: "youtube",
+      askedAt: new Date().toISOString(),
+    }
+    this.status = "thinking"
+    this.renderPanel()
+    const response = await send<ServerReply>({ type: "askPost", videoId: this.videoId, ask: input })
+      .catch((): ServerReply => ({ ok: false, status: 0 }))
+    if (this.destroyed) return
+    if (!response.ok) {
+      this.status = response.status === 503
+        ? "asks are off, the learning agent is disabled"
+        : "Learning server unreachable, is your Mac on?"
+      this.renderPanel()
+      return
+    }
+    const id = response.data && typeof response.data === "object"
+      ? (response.data as { id?: unknown }).id
+      : undefined
+    if (typeof id !== "string") {
+      this.status = "Learning server returned an invalid Ask record."
+      this.renderPanel()
+      return
+    }
+    const ask: Ask = { ...input, id }
+    this.pendingAskId = id
+    this.status = "thinking"
+    this.items.push({ ask, answer: null, failed: false })
+    this.renderPanel()
+    void this.poll(id)
+  }
+
+  private async poll(askId: string): Promise<void> {
+    for (let attempt = 1; attempt <= 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 3_000))
+      if (this.destroyed) return
+      const response = await send<ServerReply>({ type: "askGet", videoId: this.videoId, askId })
+        .catch((): ServerReply => ({ ok: false, status: 0 }))
+      if (this.destroyed) return
+      if (!response.ok) {
+        this.finishPoll("Learning server unreachable, is your Mac on?")
+        return
+      }
+      const value = response.data as { answer?: Answer | null; failed?: boolean } | undefined
+      const decision = askPollDecision({
+        attempt,
+        maxAttempts: 40,
+        hasAnswer: !!value?.answer,
+        failed: value?.failed === true,
+      })
+      if (decision === "wait") continue
+      if (decision === "answered" && value?.answer) {
+        this.items = this.items.map((item) => item.ask.id === askId
+          ? { ...item, answer: value.answer ?? null }
+          : item)
+        this.pendingAskId = undefined
+        this.status = undefined
+        if (this.panel) this.renderPanel()
+        else this.toast("answer ready, press A")
+        return
+      }
+      this.items = this.items.map((item) => item.ask.id === askId ? { ...item, failed: true } : item)
+      this.finishPoll("no answer this time, it is saved for your next session")
+      return
+    }
+  }
+
+  private finishPoll(message: string): void {
+    this.pendingAskId = undefined
+    this.status = message
+    if (this.panel) this.renderPanel()
+    else this.toast(message)
+  }
+
+  private toast(message: string): void {
+    this.root.querySelector(".toast")?.remove()
+    if (this.toastTimer) clearTimeout(this.toastTimer)
+    const toast = document.createElement("div")
+    toast.className = "toast"
+    toast.setAttribute("role", "status")
+    toast.textContent = message
+    this.root.append(toast)
+    this.toastTimer = setTimeout(() => toast.remove(), 7_000)
+  }
+
+  private onKeyDown = (event: KeyboardEvent): void => {
+    const target = event.composedPath()[0]
+    const element = target instanceof Element ? target : undefined
+    const typing = !!element?.closest("input, textarea, [contenteditable]")
+    if (!this.panel) {
+      if (!opensAskPanel({
+        key: event.key,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+        typing,
+        quizOpen: this.quizOpen(),
+      })) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      this.open()
+      return
+    }
+    event.stopImmediatePropagation()
+    if (event.key === "Escape") {
+      event.preventDefault()
+      this.close()
+      return
+    }
+    if (event.key === "Enter" && !event.shiftKey && target instanceof HTMLTextAreaElement) {
+      event.preventDefault()
+      void this.submit(target)
+    }
   }
 }
 
@@ -228,7 +504,7 @@ class Session {
   private showPassedSeek(): void {
     if (this.seekPassed.size === 0) return
     const times = [...this.seekPassed.values()].sort((a, b) => a - b)
-    this.toast(`Passed ${times.length} unanswered ${times.length === 1 ? "quiz" : "quizzes"} at ${times.map(formatTime).join(", ")}. They will appear in the Recap quiz.`)
+    this.toast(`Passed ${times.length} unanswered ${times.length === 1 ? "quiz" : "quizzes"} at ${times.map(formatVideoTime).join(", ")}. They will appear in the Recap quiz.`)
     this.seekPassed.clear()
   }
 
@@ -625,6 +901,7 @@ class Session {
 }
 
 let active: Session | undefined
+let activeAsk: AskSession | undefined
 let navigation = 0
 let lastUrl = ""
 
@@ -651,16 +928,37 @@ async function navigate(): Promise<void> {
   const token = navigation
   active?.destroy()
   active = undefined
+  activeAsk?.destroy()
+  activeAsk = undefined
   document.getElementById(HOST_ID)?.remove()
+  document.getElementById(ASK_HOST_ID)?.remove()
   const id = videoId()
   if (!id) return
 
-  const response: ServerReply = await send<ServerReply>({ type: "plan", videoId: id }).catch((error): ServerReply => ({
-    ok: false,
-    status: 0,
-    error: error instanceof Error ? error.message : String(error),
-  }))
+  const [response, askResponse] = await Promise.all([
+    send<ServerReply>({ type: "plan", videoId: id }).catch((error): ServerReply => ({
+      ok: false,
+      status: 0,
+      error: error instanceof Error ? error.message : String(error),
+    })),
+    send<ServerReply>({ type: "askHistory", videoId: id }).catch((error): ServerReply => ({
+      ok: false,
+      status: 0,
+      error: error instanceof Error ? error.message : String(error),
+    })),
+  ])
   if (token !== navigation) return
+  let video: HTMLVideoElement | undefined
+  if (askResponse.ok) {
+    const askReply = decodeAskHistory(askResponse.data)
+    if (askReply) {
+      video = await waitForVideo(token)
+      if (!video || token !== navigation) return
+      activeAsk = new AskSession(id, askReply, video)
+    } else {
+      log(id, { level: "error", stage: "decode_ask_history", target: id, status: "failed", error: "invalid server response" })
+    }
+  }
   if (!response.ok) {
     if (response.status === 404) {
       const data = response.data as { courseVideo?: unknown; hint?: unknown } | undefined
@@ -699,7 +997,7 @@ async function navigate(): Promise<void> {
     setTimeout(() => surface.host.remove(), 7000)
     return
   }
-  const video = await waitForVideo(token)
+  video ??= await waitForVideo(token)
   if (!video || token !== navigation) return
   active = new Session(id, reply, video)
 }

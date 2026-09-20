@@ -1,4 +1,4 @@
-import type { ClientLogLine, OutcomeInput } from "@learn/core"
+import type { AskInput, ClientLogLine, OutcomeInput } from "@learn/core"
 
 const SERVER = "http://127.0.0.1:4517"
 const LOG_KEY = "learningLogs"
@@ -9,6 +9,9 @@ type ServerReply = { ok: boolean; status: number; data?: unknown; error?: string
 type Message =
   | { type: "plan"; videoId: string }
   | { type: "outcome"; videoId: string; outcome: OutcomeInput }
+  | { type: "askHistory"; videoId: string }
+  | { type: "askPost"; videoId: string; ask: AskInput }
+  | { type: "askGet"; videoId: string; askId: string }
   | { type: "reviewOutcome"; outcome: OutcomeInput }
   | { type: "reviewDue" }
   | { type: "reviewStreak" }
@@ -147,6 +150,19 @@ async function handle(message: Message): Promise<unknown> {
   if (message.type === "plan") {
     const target = `/quiz-plans/by-video/${encodeURIComponent(message.videoId)}`
     return request("fetch_quiz_plan", target, message.videoId)
+  }
+  if (message.type === "askHistory") {
+    return request("fetch_ask_history", `/asks/by-video/${encodeURIComponent(message.videoId)}`, message.videoId)
+  }
+  if (message.type === "askPost") {
+    return request("post_ask", "/asks", message.videoId, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(message.ask),
+    })
+  }
+  if (message.type === "askGet") {
+    return request("fetch_ask", `/asks/${encodeURIComponent(message.askId)}`, message.videoId)
   }
   if (message.type === "outcome") {
     return request("post_outcome", "/outcomes", message.videoId, {

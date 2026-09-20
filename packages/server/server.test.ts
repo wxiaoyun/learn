@@ -587,6 +587,8 @@ describe("agent tools", () => {
         recall: { correct: 1, wrong: 0 },
         application: { correct: 2, wrong: 1 },
       },
+      askCount: 0,
+      latestAskAt: null,
       latestOutcomeAt: "2026-03-20T16:00:00.000Z",
       latestCorrectApplicationAt: "2026-03-20T15:00:00.000Z",
       latestWrongAt: "2026-03-20T16:00:00.000Z",

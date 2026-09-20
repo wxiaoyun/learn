@@ -46,10 +46,11 @@ After resolving a prepared Course, make `get_course_state { "courseId": "<course
 
 1. If the learning server is unreachable, say so plainly. Skip the remaining server calls. Continue from the dashboard alone and clearly mark it as possibly stale.
 2. Read `LEARNING.md` completely. Read the latest linked Session only when the dashboard lacks needed context.
-3. Read `Outcomes ingested through: <ISO timestamp>` from `Current Checkpoint`. Call `get_outcomes { "courseId": "<courseId>", "since": "<timestamp>" }`. Omit `since` when no watermark exists.
-4. Ingest each new Outcome and Grade. Ignore records already ingested, including records exactly at the watermark. Then set the watermark to the latest ingested Outcome `answeredAt`. Preserve it when no newer Outcome exists. If no watermark and no Outcome exist, store `1970-01-01T00:00:00.000Z`.
-5. Call `get_due_reviews { "courseId": "<courseId>" }`. Mention the streak in one short line, never more. If Nodes are due, offer to run them before continuing.
-6. Continue from `Current Checkpoint` unless the learner chooses another Unit. Use Solid Nodes as the teaching floor.
+3. Read `recentAsks` and `unansweredAsks` from the Course state. Treat each Ask as a confusion signal on its tagged Nodes. At the start of the Session, answer every unanswered Ask with `answer_ask` after reading the relevant Source material.
+4. Read `Outcomes ingested through: <ISO timestamp>` from `Current Checkpoint`. Call `get_outcomes { "courseId": "<courseId>", "since": "<timestamp>" }`. Omit `since` when no watermark exists.
+5. Ingest each new Outcome and Grade. Ignore records already ingested, including records exactly at the watermark. Then set the watermark to the latest ingested Outcome `answeredAt`. Preserve it when no newer Outcome exists. If no watermark and no Outcome exist, store `1970-01-01T00:00:00.000Z`.
+6. Call `get_due_reviews { "courseId": "<courseId>" }`. Mention the streak in one short line, never more. If Nodes are due, offer to run them before continuing.
+7. Continue from `Current Checkpoint` unless the learner chooses another Unit. Use Solid Nodes as the teaching floor.
 
 Do not dump the dashboard back to the learner. State only the Current Checkpoint, new evidence that needs attention, and next useful action.
 
@@ -62,6 +63,7 @@ Judge Knowledge State per Node from the evidence itself, not from counts alone.
 - Preserve the existing distinction between a genuine gap and a careless mistake. Record uncertainty as `Developing` until evidence resolves it.
 - `skipped` and `flagged` Outcomes are never evidence about the learner.
 - An Explain-back grade is a Node-level judgment. An `understood` grade for an application Tier Explain-back may support `Solid`.
+- An Ask is never correct or wrong. An Ask never promotes or demotes a Node by itself. Repeated recent Asks on one Node are reason to mark it `Developing` and address it before moving on.
 
 ## Run Due Reviews
 
@@ -153,6 +155,7 @@ Session rules:
 - Distinguish genuine knowledge gaps from careless mistakes.
 - Preserve important learner notes attached to Outcomes.
 - Record misconceptions separately from missing vocabulary.
+- Record notable Asks under `Gaps and Misconceptions`, with their Node ids and the useful part of each Answer.
 - Link created files with paths relative to the Session file.
 - Make `Next Action` specific enough for another agent to resume immediately.
 

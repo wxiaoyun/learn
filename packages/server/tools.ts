@@ -3,16 +3,20 @@ import { CallToolResult, Tool as McpTool } from "@effect/ai/McpSchema"
 import {
   AgentOutcomeInputSchema,
   GradeOutcomeInputSchema,
+  SlugSchema,
+  createAnswerId,
+  createGradeId,
+  createOutcomeId,
+  parseAsks,
   NodesSchema,
   QuizPlanSchema,
   RoadmapSchema,
-  SlugSchema,
-  createGradeId,
-  createOutcomeId,
   parseNodes,
   parseOutcomes,
   parseQuizPlan,
   parseRoadmap,
+  type Answer,
+  type Ask,
   type GradeOutcome,
   type Nodes,
   type Outcome,
@@ -57,6 +61,10 @@ export interface LearningStoreService {
     since?: string,
   ) => Effect.Effect<ReadonlyArray<OutcomeRecord>, AppError, ServerLogger>
   readonly appendOutcome: (outcome: Outcome) => Effect.Effect<unknown, AppError, ServerLogger>
+  readonly appendAsk: (ask: Ask) => Effect.Effect<unknown, AppError, ServerLogger>
+  readonly appendAnswer: (courseId: string, answer: Answer) => Effect.Effect<unknown, AppError, ServerLogger>
+  readonly getAsk: (askId: string) => Effect.Effect<unknown, AppError, ServerLogger>
+  readonly asksByVideo: (videoId: string) => Effect.Effect<unknown, AppError, ServerLogger>
   readonly appendGrade: (
     courseId: string,
     grade: GradeOutcome,
@@ -130,7 +138,7 @@ function defineTool<const Name extends string>(
 export const agentTools: ReadonlyArray<AgentToolDefinition> = [
   defineTool("list_courses", "List course ids and titles.", {}, () =>
     Effect.flatMap(LearningStore, (store) => store.listCourses)),
-  defineTool("get_course_state", "Get roadmap, nodes, outcome summaries, ungraded explain-backs, and flagged questions for one course.", {
+  defineTool("get_course_state", "Get roadmap, nodes, Outcome and Ask summaries, ungraded explain-backs, and flagged Questions for one Course.", {
     courseId: SlugSchema,
   }, ({ courseId }) => Effect.flatMap(LearningStore, (store) => store.getCourseState(courseId))),
   defineTool("get_due_reviews", "Get due Nodes, picked review Questions, pool status, and daily streak across Courses.", {
@@ -172,6 +180,23 @@ export const agentTools: ReadonlyArray<AgentToolDefinition> = [
     }
     const records = yield* parsed(parseOutcomes(`${JSON.stringify(record)}\n`, "append_outcome"))
     return yield* Effect.flatMap(LearningStore, (store) => store.appendOutcome(records[0] as Outcome))
+  })),
+  defineTool("answer_ask", "Append one Answer to an Ask. The server supplies ids and time.", {
+    courseId: SlugSchema,
+    askId: Schema.String.pipe(Schema.minLength(1)),
+    text: Schema.String.pipe(Schema.minLength(1)),
+    nodeIds: Schema.Array(SlugSchema),
+  }, ({ courseId, askId, text, nodeIds }) => Effect.gen(function*() {
+    const record = {
+      type: "answer" as const,
+      id: createAnswerId(askId),
+      askId,
+      text,
+      nodeIds,
+      answeredAt: new Date().toISOString(),
+    }
+    const records = yield* parsed(parseAsks(`${JSON.stringify(record)}\n`, "answer_ask"))
+    return yield* Effect.flatMap(LearningStore, (store) => store.appendAnswer(courseId, records[0] as Answer))
   })),
   defineTool("append_grade", "Append one explain-back grade. The server supplies its deterministic id.", {
     courseId: SlugSchema,

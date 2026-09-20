@@ -194,7 +194,7 @@ function outcome(
     questionId: review.question.id,
     nodeId: review.node.id,
     tier: review.question.tier,
-    surface: "mobile",
+    surface: "browser",
     status,
     answeredAt: new Date().toISOString(),
     ...(chosenIndex !== undefined && { chosenIndex }),

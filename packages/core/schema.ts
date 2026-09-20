@@ -332,7 +332,7 @@ export const QuizPlanSchema = Schema.Struct({
   }),
 )
 
-export const SurfaceSchema = Schema.Literal("youtube", "agent", "mobile")
+export const SurfaceSchema = Schema.Literal("youtube", "agent", "mobile", "browser")
 export const LogLevelSchema = Schema.Literal("info", "warn", "error")
 export const ClientLogLineSchema = Schema.Struct({
   level: LogLevelSchema,
@@ -383,6 +383,81 @@ export function createOutcomeId(input: {
 export function createGradeId(outcomeId: string): string {
   return `grade:${encodeURIComponent(outcomeId)}`
 }
+
+export function createAskId(input: {
+  unitId: string
+  surface: Schema.Schema.Type<typeof SurfaceSchema>
+  askedAt: string
+}): string {
+  return `ask:${encodeURIComponent(input.unitId)}:${input.surface}:${encodeURIComponent(input.askedAt)}`
+}
+
+export function createAnswerId(askId: string): string {
+  return `answer:${encodeURIComponent(askId)}`
+}
+
+const askText = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(2000),
+  Schema.filter((value) => value.trim().length > 0 || "must not be blank"),
+)
+
+const askFields = {
+  courseId: SlugSchema,
+  unitId: SlugSchema,
+  location: LocationSchema,
+  text: askText,
+  surface: SurfaceSchema,
+  askedAt: isoDateTime,
+}
+
+function askLocationIssues(ask: { unitId: string; location: Location }): Schema.FilterIssue[] {
+  return ask.location.unitId === ask.unitId
+    ? []
+    : [{ path: ["location", "unitId"], message: "must match unitId" }]
+}
+
+export const AskInputSchema = Schema.Struct({
+  type: Schema.Literal("ask"),
+  ...askFields,
+}).pipe(Schema.filter(askLocationIssues))
+
+export const AskSchema = Schema.Struct({
+  type: Schema.Literal("ask"),
+  id: nonEmptyString,
+  ...askFields,
+}).pipe(Schema.filter((ask) => {
+  const issues = askLocationIssues(ask)
+  const expected = createAskId(ask)
+  if (ask.id !== expected) issues.push({ path: ["id"], message: `must equal deterministic id "${expected}"` })
+  return issues
+}))
+
+const answerFields = {
+  askId: nonEmptyString,
+  text: nonEmptyString.pipe(Schema.filter((value) => value.trim().length > 0 || "must not be blank")),
+  nodeIds: Schema.Array(SlugSchema),
+}
+
+export const AnswerInputSchema = Schema.Struct({
+  type: Schema.Literal("answer"),
+  ...answerFields,
+})
+
+export const AnswerSchema = Schema.Struct({
+  type: Schema.Literal("answer"),
+  id: nonEmptyString,
+  ...answerFields,
+  answeredAt: isoDateTime,
+}).pipe(Schema.filter((answer) => {
+  const expected = createAnswerId(answer.askId)
+  return answer.id === expected || {
+    path: ["id"],
+    message: `must equal deterministic id "${expected}"`,
+  }
+}))
+
+export const AskRecordSchema = Schema.Union(AskSchema, AnswerSchema)
 
 const outcomeFields = {
   courseId: SlugSchema,
@@ -472,6 +547,11 @@ export type ExplainBackQuestion = Schema.Schema.Type<typeof ExplainBackQuestionS
 export type Question = Schema.Schema.Type<typeof QuestionSchema>
 export type Placement = Schema.Schema.Type<typeof PlacementSchema>
 export type QuizPlan = Schema.Schema.Type<typeof QuizPlanSchema>
+export type AskInput = Schema.Schema.Type<typeof AskInputSchema>
+export type Ask = Schema.Schema.Type<typeof AskSchema>
+export type AnswerInput = Schema.Schema.Type<typeof AnswerInputSchema>
+export type Answer = Schema.Schema.Type<typeof AnswerSchema>
+export type AskRecord = Schema.Schema.Type<typeof AskRecordSchema>
 export type OutcomeInput = Schema.Schema.Type<typeof OutcomeInputSchema>
 export type AgentOutcomeInput = Schema.Schema.Type<typeof AgentOutcomeInputSchema>
 export type Outcome = Schema.Schema.Type<typeof OutcomeSchema>
@@ -811,6 +891,36 @@ export function parseOutcomes(text: string, file = "outcomes.jsonl"): PlainParse
 
 export function serializeOutcome(outcome: OutcomeRecord): string {
   const result = decode(OutcomeRecordSchema, outcome, "outcomes.jsonl")
+  if (!result.ok) throw new Error(result.error)
+  return `${JSON.stringify(result.value)}\n`
+}
+
+export function parseAsks(text: string, file = "asks.jsonl"): PlainParseResult<AskRecord[]> {
+  log("info", "parse_asks", { target: file, status: "start" })
+  const records: AskRecord[] = []
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue
+    let input: unknown
+    try {
+      input = JSON.parse(line)
+    } catch (error) {
+      const message = `${file}:${index + 1}: root: invalid JSON: ${error instanceof Error ? error.message : String(error)}`
+      log("error", "parse_asks", { target: file, status: "failed", error: message })
+      return { ok: false, error: message }
+    }
+    const decoded = decode(AskRecordSchema, input, `${file}:${index + 1}`)
+    if (!decoded.ok) {
+      log("error", "parse_asks", { target: file, status: "failed", error: decoded.error })
+      return decoded
+    }
+    records.push(decoded.value)
+  }
+  log("info", "parse_asks", { target: file, status: "ok" })
+  return { ok: true, value: records }
+}
+
+export function serializeAsk(record: AskRecord): string {
+  const result = decode(AskRecordSchema, record, "asks.jsonl")
   if (!result.ok) throw new Error(result.error)
   return `${JSON.stringify(result.value)}\n`
 }

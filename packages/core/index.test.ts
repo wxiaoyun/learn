@@ -2,18 +2,24 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { appendOutcome } from "./node"
+import { appendAsk, appendOutcome } from "./node"
 import {
+  createAnswerId,
+  createAskId,
   createGradeId,
   createOutcomeId,
+  parseAsks,
   parseNodes,
   parseOutcomes,
   parseQuizPlan,
   parseRoadmap,
+  serializeAsk,
   serializeNodes,
   serializeOutcome,
   serializeQuizPlan,
   serializeRoadmap,
+  type Answer,
+  type Ask,
   type GradeOutcome,
   type Nodes,
   type Outcome,
@@ -225,6 +231,39 @@ describe("state validation", () => {
       missing: "The explanation missed the consequence.",
     }
     expect(value(parseOutcomes(serializeOutcome(outcome) + serializeOutcome(grade)))).toEqual([outcome, grade])
+  })
+})
+
+describe("Ask identity and append", () => {
+  test("round trips records and skips retried appends", async () => {
+    const askedAt = "2026-03-21T10:00:00.000Z"
+    const ask: Ask = {
+      type: "ask",
+      id: createAskId({ unitId: "first-unit", surface: "youtube", askedAt }),
+      courseId: "systems-course",
+      unitId: "first-unit",
+      location: { unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 10 } },
+      text: "How does this fit?",
+      surface: "youtube",
+      askedAt,
+    }
+    const answer: Answer = {
+      type: "answer",
+      id: createAnswerId(ask.id),
+      askId: ask.id,
+      text: "It fits through the core Node.",
+      nodeIds: ["core-node"],
+      answeredAt: "2026-03-21T10:00:01.000Z",
+    }
+    expect(value(parseAsks(serializeAsk(ask) + serializeAsk(answer)))).toEqual([ask, answer])
+    const directory = await mkdtemp(join(tmpdir(), "learn-core-asks-"))
+    tempPaths.push(directory)
+    const file = join(directory, "asks.jsonl")
+    expect(await appendAsk(file, ask)).toBe("appended")
+    expect(await appendAsk(file, ask)).toBe("duplicate")
+    expect(await appendAsk(file, answer)).toBe("appended")
+    expect(await appendAsk(file, { ...answer, answeredAt: "2026-03-21T10:00:02.000Z" })).toBe("duplicate")
+    expect((await readFile(file, "utf8")).trim().split("\n")).toHaveLength(2)
   })
 })
 

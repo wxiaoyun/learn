@@ -4,43 +4,79 @@ import { dirname, join, resolve } from "node:path"
 import {
   SlugSchema,
   log,
+  parseAsks,
   parseOutcomes,
+  serializeAsk,
   serializeOutcome,
+  type AskRecord,
   type OutcomeRecord,
 } from "./schema"
 import * as Schema from "effect/Schema"
 
-export async function appendOutcome(
-  file: string,
-  outcome: OutcomeRecord,
-): Promise<"appended" | "duplicate"> {
-  log("info", "outcome_append", { target: file, status: "start" })
+async function appendRecord<T extends { readonly id: string }>(input: {
+  file: string
+  record: T
+  stage: string
+  parse: (text: string, file: string) => { ok: true; value: T[] } | { ok: false; error: string }
+  serialize: (record: T) => string
+  duplicate: (records: T[], record: T) => boolean
+}): Promise<"appended" | "duplicate"> {
+  log("info", input.stage, { target: input.file, status: "start" })
   try {
-    const serialized = serializeOutcome(outcome)
+    const serialized = input.serialize(input.record)
     let existing = ""
     try {
-      existing = await readFile(file, "utf8")
+      existing = await readFile(input.file, "utf8")
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
     }
-    const parsed = parseOutcomes(existing, file)
+    const parsed = input.parse(existing, input.file)
     if (!parsed.ok) throw new Error(parsed.error)
-    if (parsed.value.some((record) => record.id === outcome.id)) {
-      log("info", "outcome_append", { target: file, status: "duplicate" })
+    if (input.duplicate(parsed.value, input.record)) {
+      log("info", input.stage, { target: input.file, status: "duplicate" })
       return "duplicate"
     }
-    await mkdir(dirname(file), { recursive: true })
-    await appendFile(file, serialized, "utf8")
-    log("info", "outcome_append", { target: file, status: "appended" })
+    await mkdir(dirname(input.file), { recursive: true })
+    await appendFile(input.file, serialized, "utf8")
+    log("info", input.stage, { target: input.file, status: "appended" })
     return "appended"
   } catch (error) {
-    log("error", "outcome_append", {
-      target: file,
+    log("error", input.stage, {
+      target: input.file,
       status: "failed",
       error: error instanceof Error ? error.message : String(error),
     })
     throw error
   }
+}
+
+export async function appendOutcome(
+  file: string,
+  outcome: OutcomeRecord,
+): Promise<"appended" | "duplicate"> {
+  return appendRecord({
+    file,
+    record: outcome,
+    stage: "outcome_append",
+    parse: parseOutcomes,
+    serialize: serializeOutcome,
+    duplicate: (records, record) => records.some((candidate) => candidate.id === record.id),
+  })
+}
+
+export async function appendAsk(
+  file: string,
+  record: AskRecord,
+): Promise<"appended" | "duplicate"> {
+  return appendRecord({
+    file,
+    record,
+    stage: "ask_append",
+    parse: parseAsks,
+    serialize: serializeAsk,
+    duplicate: (records, candidate) => records.some((existing) => existing.id === candidate.id
+      || (candidate.type === "answer" && existing.type === "answer" && existing.askId === candidate.askId)),
+  })
 }
 
 export function getLearningRoot(env: NodeJS.ProcessEnv = process.env): string {
@@ -75,6 +111,10 @@ export function quizPlanPath(root: string, courseId: string, unitId: string): st
 
 export function outcomesPath(root: string, courseId: string): string {
   return join(coursePath(root, courseId), "outcomes.jsonl")
+}
+
+export function asksPath(root: string, courseId: string): string {
+  return join(coursePath(root, courseId), "asks.jsonl")
 }
 
 export function learningDashboardPath(root: string, courseId: string): string {

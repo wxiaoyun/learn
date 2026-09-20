@@ -11,6 +11,7 @@ import { nodesPath, quizPlanPath, roadmapPath } from "@learn/core/node"
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { parseVtt, transcriptSections } from "./agent-turn"
 import { startServer, type RunningServer } from "./server"
 
 const cleanups: Array<() => Promise<void>> = []
@@ -136,16 +137,22 @@ async function writeCourse(root: string, courseId: string, includeSecondPlan = f
     await mkdir(dirname(file), { recursive: true })
     await writeFile(file, text, "utf8")
   }
-  const transcript = join(root, courseId, "sources", "youtube", `${courseId}-second.en.vtt`)
-  await mkdir(dirname(transcript), { recursive: true })
-  await writeFile(transcript, "WEBVTT\n\n00:00.000 --> 00:05.000\nSource text.\n", "utf8")
+  const sourceDirectory = join(root, courseId, "sources", "youtube")
+  await mkdir(sourceDirectory, { recursive: true })
+  for (const video of ["first", "second"]) {
+    await writeFile(
+      join(sourceDirectory, `${courseId}-${video}.en.vtt`),
+      "WEBVTT\n\n00:00.000 --> 00:05.000\nSource text.\n",
+      "utf8",
+    )
+  }
 }
 
 async function fixture(input: {
   agent?: "claude" | "off"
   timeoutMs?: number
   debounceMs?: number
-  mode?: "grade" | "noop"
+  mode?: "grade" | "answer" | "noop"
   sleepMs?: number
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "learn-agent-root-"))
@@ -160,6 +167,9 @@ const calls = process.env.STUB_CALLS!
 const event = (name: string) => appendFile(calls, JSON.stringify({ event: name, kind: process.env.LEARNING_AGENT_KIND, outcomeId: process.env.LEARNING_OUTCOME_ID, unitId: process.env.LEARNING_UNIT_ID, at: Date.now() }) + "\\n")
 await event("start")
 if (control.sleepMs) await Bun.sleep(control.sleepMs)
+if (control.mode === "answer" && process.env.LEARNING_AGENT_KIND === "ask") {
+  await fetch("http://127.0.0.1:" + process.env.LEARNING_PORT + "/tools/answer_ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ courseId: process.env.LEARNING_COURSE_ID, askId: process.env.LEARNING_ASK_ID, text: "ANSWER_SECRET_417 The foundation supports the next step.", nodeIds: ["first-node"] }) })
+}
 if (control.mode === "grade" && process.env.LEARNING_AGENT_KIND === "grade") {
   const state = await fetch("http://127.0.0.1:" + process.env.LEARNING_PORT + "/tools/get_course_state", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ courseId: process.env.LEARNING_COURSE_ID }) }).then((response) => response.json()) as any
   const outcome = state.ungradedExplainBacks.find((value: any) => value.id === process.env.LEARNING_OUTCOME_ID)
@@ -189,6 +199,11 @@ console.log(JSON.stringify({ total_cost_usd: 0 }))
     const text = await response.text()
     return { response, body: text ? JSON.parse(text) : undefined }
   }
+  const postAsk = (body: Record<string, unknown>) => request("/asks", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
   const postOutcome = (body: Record<string, unknown>) => request("/outcomes", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -207,7 +222,7 @@ console.log(JSON.stringify({ total_cost_usd: 0 }))
     await rm(bin, { recursive: true, force: true })
   }
   cleanups.push(close)
-  return { root, base, running, control, calls, request, postOutcome, events, close }
+  return { root, base, running, control, calls, request, postAsk, postOutcome, events, close }
 }
 
 async function waitFor(check: () => Promise<boolean>, timeoutMs = 3_000): Promise<void> {
@@ -234,6 +249,18 @@ function explain(courseId: string, surface: "youtube" | "agent", answeredAt: str
   }
 }
 
+function ask(courseId: string, askedAt: string, text = "ASK_SECRET_319 How does this fit?") {
+  return {
+    type: "ask",
+    courseId,
+    unitId: "first-unit",
+    location: { unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 4 } },
+    text,
+    surface: "youtube",
+    askedAt,
+  }
+}
+
 function recap(courseId: string, questionId: string, answeredAt: string) {
   return {
     type: "outcome",
@@ -249,6 +276,138 @@ function recap(courseId: string, questionId: string, answeredAt: string) {
     answeredAt,
   }
 }
+
+describe("VTT context", () => {
+  test("removes settings, timing tags, and rolling caption duplicates", () => {
+    const cues = parseVtt(`WEBVTT\n\n00:00:01.000 --> 00:00:02.000 align:start position:0%\n<c>Hello</c>\n\n00:00:02.000 --> 00:00:03.000\n<00:00:02.200><c>Hello world</c>\n\n00:00:03.000 --> 00:00:04.000\nHello world\nagain\n`)
+    expect(cues).toEqual([
+      { start: 1, text: "Hello" },
+      { start: 2, text: "world" },
+      { start: 3, text: "again" },
+    ])
+  })
+
+  test("splits covered, just watched, and later cues", () => {
+    const sections = transcriptSections([
+      { start: 1, text: "early" },
+      { start: 100, text: "recent" },
+      { start: 230, text: "later" },
+    ], 200)
+    expect(sections.upTo).toContain("COVERED EARLIER\n0:01 early")
+    expect(sections.upTo).toContain("JUST WATCHED, LAST TWO MINUTES\n1:40 recent")
+    expect(sections.later).toBe("3:50 later")
+  })
+
+  test("caps long covered transcript", () => {
+    const sections = transcriptSections(Array.from({ length: 800 }, (_, index) => ({
+      start: index,
+      text: `cue-${index}-${"x".repeat(100)}`,
+    })), 799)
+    expect(sections.cut).toBe(true)
+    expect(sections.upTo).toContain("MIDDLE OF COVERED TRANSCRIPT CUT")
+    expect(sections.upTo.length).toBeLessThan(61_000)
+  })
+})
+
+describe("Asks", () => {
+  test("returns 503 while off and stores nothing", async () => {
+    const value = await fixture({ agent: "off" })
+    await writeCourse(value.root, "ask-off")
+    const result = await value.postAsk(ask("ask-off", "2026-03-21T10:00:00.000Z"))
+    expect(result.response.status).toBe(503)
+    expect(result.body.error).toContain("asks are disabled")
+    expect(await readFile(join(value.root, "ask-off", "asks.jsonl"), "utf8").catch(() => "missing")).toBe("missing")
+  })
+
+  test("answers once, judges success by state, and keeps texts out of logs", async () => {
+    const value = await fixture({ mode: "answer" })
+    await writeCourse(value.root, "ask-success")
+    const input = ask("ask-success", "2026-03-21T10:00:00.000Z")
+    const first = await value.postAsk(input)
+    const second = await value.postAsk(input)
+    expect(first.body.status).toBe("appended")
+    expect(second.body.status).toBe("duplicate")
+    const askId = first.body.id as string
+    await waitFor(async () => (await value.request(`/asks/${encodeURIComponent(askId)}`)).body.answer !== null)
+    const state = await value.request(`/asks/${encodeURIComponent(askId)}`)
+    expect(state.body.answer).toEqual(expect.objectContaining({
+      askId,
+      text: "ANSWER_SECRET_417 The foundation supports the next step.",
+      nodeIds: ["first-node"],
+    }))
+    expect(state.body.failed).toBe(false)
+    expect((await value.events()).filter((event) => event.kind === "ask" && event.event === "start")).toHaveLength(1)
+    const log = await readFile(join(value.root, ".logs", "server.jsonl"), "utf8")
+    expect(log).not.toContain("ASK_SECRET_319")
+    expect(log).not.toContain("ANSWER_SECRET_417")
+    expect(log).toContain('"status":"ok"')
+  })
+
+  test("reports a failed turn that writes no Answer", async () => {
+    const value = await fixture({ mode: "noop" })
+    await writeCourse(value.root, "ask-failed")
+    const posted = await value.postAsk(ask("ask-failed", "2026-03-21T10:00:00.000Z"))
+    await waitFor(async () => (await value.request(`/asks/${encodeURIComponent(posted.body.id)}`)).body.failed === true)
+    const result = await value.request(`/asks/${encodeURIComponent(posted.body.id)}`)
+    expect(result.body.answer).toBeNull()
+    expect(result.body.failed).toBe(true)
+  })
+
+  test("rejects a Unit outside the Roadmap", async () => {
+    const value = await fixture({ mode: "noop" })
+    await writeCourse(value.root, "ask-unit")
+    const result = await value.postAsk({
+      ...ask("ask-unit", "2026-03-21T10:00:00.000Z"),
+      unitId: "missing-unit",
+      location: { unitId: "missing-unit", anchor: { kind: "video-timestamp", seconds: 1 } },
+    })
+    expect(result.response.status).toBe(400)
+    expect(result.body.error).toContain("not a Roadmap video Unit")
+  })
+
+  test("validates tagged Nodes, rejects a second Answer, and orders history", async () => {
+    const value = await fixture({ mode: "noop", sleepMs: 100 })
+    await writeCourse(value.root, "ask-tool")
+    const later = await value.postAsk(ask("ask-tool", "2026-03-21T10:01:00.000Z", "Later Ask"))
+    const earlier = await value.postAsk(ask("ask-tool", "2026-03-21T10:00:00.000Z", "Earlier Ask"))
+    const tool = (name: string, body: unknown) => value.request(`/tools/${name}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    const unknown = await tool("answer_ask", {
+      courseId: "ask-tool",
+      askId: earlier.body.id,
+      text: "An Answer.",
+      nodeIds: ["missing-node"],
+    })
+    expect(unknown.response.status).toBe(400)
+    expect(unknown.body.error).toContain('Node id "missing-node" does not exist')
+    const answered = await tool("answer_ask", {
+      courseId: "ask-tool",
+      askId: earlier.body.id,
+      text: "An Answer.",
+      nodeIds: ["first-node"],
+    })
+    const duplicate = await tool("answer_ask", {
+      courseId: "ask-tool",
+      askId: earlier.body.id,
+      text: "A different Answer.",
+      nodeIds: [],
+    })
+    expect(answered.body.status).toBe("appended")
+    expect(duplicate.body.status).toBe("duplicate")
+    const state = await tool("get_course_state", { courseId: "ask-tool" })
+    expect(state.body.nodeSummaries[0]).toEqual(expect.objectContaining({
+      nodeId: "first-node",
+      askCount: 1,
+      latestAskAt: "2026-03-21T10:00:00.000Z",
+    }))
+    expect(state.body.recentAsks).toHaveLength(1)
+    const history = await value.request("/asks/by-video/ask-tool-first")
+    expect(history.body.asks.map((item: any) => item.ask.id)).toEqual([earlier.body.id, later.body.id])
+  })
+})
 
 describe("server-started agent turns", () => {
   test("off starts nothing", async () => {
@@ -304,7 +463,7 @@ describe("server-started agent turns", () => {
   })
 
   test("kills timed out turns and logs timeout", async () => {
-    const value = await fixture({ mode: "noop", sleepMs: 500, timeoutMs: 50 })
+    const value = await fixture({ mode: "noop", sleepMs: 500, timeoutMs: 150 })
     await writeCourse(value.root, "timeout-course")
     await value.postOutcome(explain("timeout-course", "youtube", "2026-03-21T10:00:00.000Z"))
     await waitFor(async () => {
@@ -332,6 +491,19 @@ describe("server-started agent turns", () => {
       chosenIndex: 1,
     })
     response = await value.request("/quiz-plans/by-video/weak-course-second")
+    expect(response.body.hint).toContain("visit the agent first")
+    expect(response.body.hint).toContain("First Node")
+
+    const repeated = await fixture({ mode: "answer" })
+    await writeCourse(repeated.root, "repeated-asks")
+    const now = Date.now()
+    await repeated.postAsk(ask("repeated-asks", new Date(now - 2_000).toISOString(), "First Ask"))
+    await repeated.postAsk(ask("repeated-asks", new Date(now - 1_000).toISOString(), "Second Ask"))
+    await waitFor(async () => {
+      const history = await repeated.request("/asks/by-video/repeated-asks-first")
+      return history.body.asks.filter((item: any) => item.answer).length === 2
+    })
+    response = await repeated.request("/quiz-plans/by-video/repeated-asks-second")
     expect(response.body.hint).toContain("visit the agent first")
     expect(response.body.hint).toContain("First Node")
 
