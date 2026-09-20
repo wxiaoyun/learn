@@ -87,10 +87,21 @@ Agent tools are defined once in `packages/server/tools.ts`. Claude Code reaches 
 HTTP for the browser extension and the mobile surface:
 
 - `GET /health`
-- `GET /quiz-plans/by-video/:videoId`: the course id, unit id, quiz plan, three lists of question ids (answered, meaning any outcome other than skipped, then correct, then wrong by the latest outcome per question), and the last 10 graded results for the course, which seed tier selection. 404 when no plan exists.
+- `GET /quiz-plans/by-video/:videoId`: the course id, unit id, quiz plan, three lists of question ids (answered, meaning any outcome other than skipped, then correct, then wrong by the latest outcome per question), and the last 10 graded results for the course, which seed tier selection. 404 when no plan exists. When the video belongs to a roadmap unit that has no quiz plan yet, the 404 body says so and carries a hint derived on each request: "visit the agent first" with up to three node titles when a prerequisite node was last answered wrong, "a quiz plan is being generated, reload in a minute" while a generation turn is pending, else "no quiz plan yet, run a primer first". A video that belongs to no course gets a plain 404 and the extension stays silent.
 - `GET /reviews/due`: the same payload as `get_due_reviews`.
+- `GET /grades/:outcomeId`: the grade for one outcome, or 404. The browser extension polls it for up to 90 seconds after an explain-back.
 - `POST /outcomes`: one outcome or an array of outcomes. `answeredAt` is required here, because the client supplies it to keep retries idempotent.
 - `POST /logs`: forward client log lines into the server log file.
+
+## Server started agent turns
+
+`LEARNING_AGENT` picks the driver: `claude` (default), `pi`, or `off`. `off` disables every server started turn, and the fallbacks in ADR 0002 carry the work. Turns run one at a time with a 5 minute timeout and no retries. Success is judged by state, never by agent prose: the grade or the quiz plan must exist after the turn.
+
+- The `claude` driver runs `claude -p` in restricted mode with no setting sources, a strict MCP config that holds only the learning server, an allowlist of the learning tools plus read only file tools, and no session persistence. `--bare` is not usable, because it disables subscription auth. A grading turn measured about 6 seconds and 0.03 USD notional.
+- The `pi` driver runs `pi -p` with only the `learning-tools.ts` extension, no skills, no context files, and the same tool allowlist.
+- Grading: an `ungraded` explain-back from a surface other than the agent enqueues one turn. The learner's text goes into the prompt inside a random fence, labelled as untrusted data, and is never logged.
+- Next quiz plan: recap quiz outcomes from the YouTube surface enqueue one generation turn for the next unit by roadmap order, debounced to about 20 seconds after the last recap outcome, so a burst yields one turn. No turn starts when the next unit already has a plan, when a turn for it is pending, or when the "visit the agent first" condition holds.
+- Writes made through the agent tools never start a turn, so a turn cannot recurse.
 
 ## Milestones
 
