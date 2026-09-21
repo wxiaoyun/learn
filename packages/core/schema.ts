@@ -1,18 +1,17 @@
-import * as ParseResult from "effect/ParseResult"
 import * as Schema from "effect/Schema"
 
-const nonEmptyString = Schema.String.pipe(Schema.minLength(1))
-const nonNegativeInteger = Schema.Number.pipe(Schema.int(), Schema.nonNegative())
-const positiveInteger = Schema.Number.pipe(Schema.int(), Schema.positive())
+const nonEmptyString = Schema.String.check(Schema.isMinLength(1))
+const nonNegativeInteger = Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))
+const positiveInteger = Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0))
 
-export const SlugSchema = Schema.String.pipe(
-  Schema.pattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, { message: () => "must be a lowercase slug" }),
+export const SlugSchema = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, { message: "must be a lowercase slug" }),
 )
 
 export const YouTubeSourceSchema = Schema.Struct({
   videoId: nonEmptyString,
-  url: Schema.String.pipe(
-    Schema.pattern(/^https?:\/\//, { message: () => "must be an HTTP URL" }),
+  url: Schema.String.check(
+    Schema.isPattern(/^https?:\/\//, { message: "must be an HTTP URL" }),
   ),
 })
 
@@ -45,27 +44,27 @@ export const DocumentUnitSchema = Schema.Struct({
   source: DocumentSourceSchema,
 })
 
-export const UnitSchema = Schema.Union(YouTubeUnitSchema, DocumentUnitSchema)
+export const UnitSchema = Schema.Union([YouTubeUnitSchema, DocumentUnitSchema])
 
 export const RoadmapSchema = Schema.Struct({
   courseId: SlugSchema,
   title: nonEmptyString,
   goal: nonEmptyString,
-  sourceMaterials: Schema.Array(SourceMaterialSchema).pipe(Schema.minItems(1)),
-  units: Schema.Array(UnitSchema).pipe(Schema.minItems(1)),
-}).pipe(
-  Schema.filter((roadmap) => {
+  sourceMaterials: Schema.Array(SourceMaterialSchema).check(Schema.isMinLength(1)),
+  units: Schema.Array(UnitSchema).check(Schema.isMinLength(1)),
+}).check(
+  Schema.makeFilter((roadmap) => {
     const issues: Schema.FilterIssue[] = []
     const unitIds = new Set<string>()
     const videoIds = new Set<string>()
     roadmap.units.forEach((unit, index) => {
-      if (unitIds.has(unit.id)) issues.push({ path: ["units", index, "id"], message: "must be unique" })
+      if (unitIds.has(unit.id)) issues.push({ path: ["units", index, "id"], issue: "must be unique" })
       unitIds.add(unit.id)
       if (unit.kind === "youtube-video") {
         if (videoIds.has(unit.source.videoId)) {
           issues.push({
             path: ["units", index, "source", "videoId"],
-            message: "must be unique within the course",
+            issue: "must be unique within the course",
           })
         }
         videoIds.add(unit.source.videoId)
@@ -77,7 +76,7 @@ export const RoadmapSchema = Schema.Struct({
 
 export const VideoTimestampAnchorSchema = Schema.Struct({
   kind: Schema.Literal("video-timestamp"),
-  seconds: Schema.Number.pipe(Schema.nonNegative()),
+  seconds: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
 })
 
 export const PageAnchorSchema = Schema.Struct({
@@ -87,19 +86,19 @@ export const PageAnchorSchema = Schema.Struct({
 
 export const LocationSchema = Schema.Struct({
   unitId: SlugSchema,
-  anchor: Schema.Union(VideoTimestampAnchorSchema, PageAnchorSchema),
+  anchor: Schema.Union([VideoTimestampAnchorSchema, PageAnchorSchema]),
 })
 
 function sentenceCount(value: string): number {
   return value.trim().split(/(?<=[.!?])\s+/).filter(Boolean).length
 }
 
-const oneOrTwoSentences = nonEmptyString.pipe(
-  Schema.filter((value) => sentenceCount(value) <= 2 || "must be one or two sentences"),
+const oneOrTwoSentences = nonEmptyString.check(
+  Schema.makeFilter((value) => sentenceCount(value) <= 2 || "must be one or two sentences"),
 )
 
-const oneSentence = nonEmptyString.pipe(
-  Schema.filter((value) => sentenceCount(value) === 1 || "must be one sentence"),
+const oneSentence = nonEmptyString.check(
+  Schema.makeFilter((value) => sentenceCount(value) === 1 || "must be one sentence"),
 )
 
 export const NodeSchema = Schema.Struct({
@@ -110,20 +109,20 @@ export const NodeSchema = Schema.Struct({
   taughtAt: Schema.Array(LocationSchema),
 })
 
-export const NodesSchema = Schema.Array(NodeSchema).pipe(
-  Schema.filter((nodes) => {
+export const NodesSchema = Schema.Array(NodeSchema).check(
+  Schema.makeFilter((nodes) => {
     const issues: Schema.FilterIssue[] = []
     const byId = new Map(nodes.map((node, index) => [node.id, { node, index }]))
     const seen = new Set<string>()
 
     nodes.forEach((node, index) => {
-      if (seen.has(node.id)) issues.push({ path: [index, "id"], message: "must be unique" })
+      if (seen.has(node.id)) issues.push({ path: [index, "id"], issue: "must be unique" })
       seen.add(node.id)
       node.dependsOn.forEach((dependency, dependencyIndex) => {
         if (!byId.has(dependency)) {
           issues.push({
             path: [index, "dependsOn", dependencyIndex],
-            message: `names missing node "${dependency}"`,
+            issue: `names missing node "${dependency}"`,
           })
         }
       })
@@ -141,7 +140,7 @@ export const NodesSchema = Schema.Array(NodeSchema).pipe(
         if (visiting.has(dependency)) {
           issues.push({
             path: [entry.index, "dependsOn", dependencyIndex],
-            message: `creates a cycle through node "${dependency}"`,
+            issue: `creates a cycle through node "${dependency}"`,
           })
           return
         }
@@ -159,24 +158,24 @@ export const NodesSchema = Schema.Array(NodeSchema).pipe(
 const questionFields = {
   id: SlugSchema,
   nodeId: SlugSchema,
-  tier: Schema.Literal("recall", "application"),
+  tier: Schema.Literals(["recall", "application"]),
   prompt: nonEmptyString,
 }
 
 export const ChoiceQuestionSchema = Schema.Struct({
   ...questionFields,
   kind: Schema.Literal("choice"),
-  options: Schema.Array(nonEmptyString).pipe(Schema.minItems(2)),
+  options: Schema.Array(nonEmptyString).check(Schema.isMinLength(2)),
   correctIndex: nonNegativeInteger,
   explanation: nonEmptyString,
-}).pipe(
-  Schema.filter((question) => {
+}).check(
+  Schema.makeFilter((question) => {
     const issues: Schema.FilterIssue[] = []
     if (question.correctIndex >= question.options.length) {
-      issues.push({ path: ["correctIndex"], message: "must name an option" })
+      issues.push({ path: ["correctIndex"], issue: "must name an option" })
     }
     if (new Set(question.options).size !== question.options.length) {
-      issues.push({ path: ["options"], message: "must be unique" })
+      issues.push({ path: ["options"], issue: "must be unique" })
     }
     return issues
   }),
@@ -188,7 +187,7 @@ export const ExplainBackQuestionSchema = Schema.Struct({
   rubric: nonEmptyString,
 })
 
-export const QuestionSchema = Schema.Union(ChoiceQuestionSchema, ExplainBackQuestionSchema)
+export const QuestionSchema = Schema.Union([ChoiceQuestionSchema, ExplainBackQuestionSchema])
 
 export const PreQuestionPlacementSchema = Schema.Struct({
   kind: Schema.Literal("pre-question"),
@@ -199,46 +198,46 @@ export const PreQuestionPlacementSchema = Schema.Struct({
 export const PausePlacementSchema = Schema.Struct({
   kind: Schema.Literal("pause"),
   location: LocationSchema,
-  nodeIds: Schema.Array(SlugSchema).pipe(Schema.minItems(1)),
-  questionIds: Schema.Array(SlugSchema).pipe(Schema.minItems(1), Schema.maxItems(2)),
+  nodeIds: Schema.Array(SlugSchema).check(Schema.isMinLength(1)),
+  questionIds: Schema.Array(SlugSchema).check(Schema.isMinLength(1), Schema.isMaxLength(2)),
 })
 
 export const RecapPlacementSchema = Schema.Struct({
   kind: Schema.Literal("recap"),
-  questionIds: Schema.Array(SlugSchema).pipe(Schema.minItems(5), Schema.maxItems(8)),
+  questionIds: Schema.Array(SlugSchema).check(Schema.isMinLength(5), Schema.isMaxLength(8)),
   explainBackQuestionId: SlugSchema,
 })
 
-export const PlacementSchema = Schema.Union(
+export const PlacementSchema = Schema.Union([
   PreQuestionPlacementSchema,
   PausePlacementSchema,
   RecapPlacementSchema,
-)
+])
 
 export const QuizPlanSchema = Schema.Struct({
   courseId: SlugSchema,
   unitId: SlugSchema,
-  nodeIds: Schema.Array(SlugSchema).pipe(Schema.minItems(1)),
-  questionPool: Schema.Array(QuestionSchema).pipe(Schema.minItems(1)),
+  nodeIds: Schema.Array(SlugSchema).check(Schema.isMinLength(1)),
+  questionPool: Schema.Array(QuestionSchema).check(Schema.isMinLength(1)),
   placements: Schema.Array(PlacementSchema),
-}).pipe(
-  Schema.filter((plan) => {
+}).check(
+  Schema.makeFilter((plan) => {
     const issues: Schema.FilterIssue[] = []
     const declaredNodeIds = new Set(plan.nodeIds)
     const questions = new Map(plan.questionPool.map((question) => [question.id, question]))
 
     if (declaredNodeIds.size !== plan.nodeIds.length) {
-      issues.push({ path: ["nodeIds"], message: "must be unique" })
+      issues.push({ path: ["nodeIds"], issue: "must be unique" })
     }
     if (questions.size !== plan.questionPool.length) {
-      issues.push({ path: ["questionPool"], message: "question ids must be unique" })
+      issues.push({ path: ["questionPool"], issue: "question ids must be unique" })
     }
 
     plan.questionPool.forEach((question, index) => {
       if (!declaredNodeIds.has(question.nodeId)) {
         issues.push({
           path: ["questionPool", index, "nodeId"],
-          message: `names undeclared node "${question.nodeId}"`,
+          issue: `names undeclared node "${question.nodeId}"`,
         })
       }
     })
@@ -250,20 +249,20 @@ export const QuizPlanSchema = Schema.Struct({
       if (!tiers.has("recall") || !tiers.has("application")) {
         issues.push({
           path: ["questionPool"],
-          message: `node "${nodeId}" needs recall and application questions`,
+          issue: `node "${nodeId}" needs recall and application questions`,
         })
       }
     })
 
     const requireQuestion = (questionId: string, path: ReadonlyArray<PropertyKey>) => {
       const question = questions.get(questionId)
-      if (!question) issues.push({ path, message: `names missing question "${questionId}"` })
+      if (!question) issues.push({ path, issue: `names missing question "${questionId}"` })
       return question
     }
 
     const recapCount = plan.placements.filter((placement) => placement.kind === "recap").length
     if (recapCount > 1) {
-      issues.push({ path: ["placements"], message: "must contain at most one recap quiz" })
+      issues.push({ path: ["placements"], issue: "must contain at most one recap quiz" })
     }
 
     plan.placements.forEach((placement, index) => {
@@ -271,21 +270,21 @@ export const QuizPlanSchema = Schema.Struct({
       if (placement.kind === "pre-question") {
         const question = requireQuestion(placement.questionId, [...path, "questionId"])
         if (question?.kind === "explain-back") {
-          issues.push({ path: [...path, "questionId"], message: "must name a choice question" })
+          issues.push({ path: [...path, "questionId"], issue: "must name a choice question" })
         }
         if (placement.location && placement.location.unitId !== plan.unitId) {
-          issues.push({ path: [...path, "location", "unitId"], message: "must match unitId" })
+          issues.push({ path: [...path, "location", "unitId"], issue: "must match unitId" })
         }
       }
       if (placement.kind === "pause") {
         if (placement.location.unitId !== plan.unitId) {
-          issues.push({ path: [...path, "location", "unitId"], message: "must match unitId" })
+          issues.push({ path: [...path, "location", "unitId"], issue: "must match unitId" })
         }
         placement.nodeIds.forEach((nodeId, nodeIndex) => {
           if (!declaredNodeIds.has(nodeId)) {
             issues.push({
               path: [...path, "nodeIds", nodeIndex],
-              message: `names undeclared node "${nodeId}"`,
+              issue: `names undeclared node "${nodeId}"`,
             })
           }
         })
@@ -294,13 +293,13 @@ export const QuizPlanSchema = Schema.Struct({
           if (question?.kind === "explain-back") {
             issues.push({
               path: [...path, "questionIds", questionIndex],
-              message: "must name a choice question",
+              issue: "must name a choice question",
             })
           }
           if (question && !placement.nodeIds.includes(question.nodeId)) {
             issues.push({
               path: [...path, "questionIds", questionIndex],
-              message: `question node "${question.nodeId}" is not covered by the placement`,
+              issue: `question node "${question.nodeId}" is not covered by the placement`,
             })
           }
         })
@@ -311,7 +310,7 @@ export const QuizPlanSchema = Schema.Struct({
           if (question?.kind === "explain-back") {
             issues.push({
               path: [...path, "questionIds", questionIndex],
-              message: "must name a choice question",
+              issue: "must name a choice question",
             })
           }
         })
@@ -322,7 +321,7 @@ export const QuizPlanSchema = Schema.Struct({
         if (explainBack && explainBack.kind !== "explain-back") {
           issues.push({
             path: [...path, "explainBackQuestionId"],
-            message: "must name an explain-back question",
+            issue: "must name an explain-back question",
           })
         }
       }
@@ -332,34 +331,34 @@ export const QuizPlanSchema = Schema.Struct({
   }),
 )
 
-export const SurfaceSchema = Schema.Literal("youtube", "agent", "mobile", "browser")
-export const LogLevelSchema = Schema.Literal("info", "warn", "error")
+export const SurfaceSchema = Schema.Literals(["youtube", "agent", "mobile", "browser"])
+export const LogLevelSchema = Schema.Literals(["info", "warn", "error"])
 export const ClientLogLineSchema = Schema.Struct({
   level: LogLevelSchema,
   stage: nonEmptyString,
   target: Schema.optional(Schema.String),
   status: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
-  fields: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.Unknown })),
+  fields: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 })
 export const ClientLogsSchema = Schema.Struct({
   surface: SurfaceSchema,
-  lines: Schema.Array(ClientLogLineSchema).pipe(Schema.minItems(1)),
+  lines: Schema.Array(ClientLogLineSchema).check(Schema.isMinLength(1)),
 })
-export const OutcomeStatusSchema = Schema.Literal(
+export const OutcomeStatusSchema = Schema.Literals([
   "correct",
   "wrong",
   "skipped",
   "flagged",
   "ungraded",
-)
-export const NodeJudgmentSchema = Schema.Literal("understood", "partial", "not-understood")
+])
+export const NodeJudgmentSchema = Schema.Literals(["understood", "partial", "not-understood"])
 
-const isoDateTime = Schema.String.pipe(
-  Schema.pattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/, {
-    message: () => "must be an ISO date-time",
+const isoDateTime = Schema.String.check(
+  Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/, {
+    message: "must be an ISO date-time",
   }),
-  Schema.filter((value) => {
+  Schema.makeFilter((value) => {
     const [date] = value.split("T")
     const [year, month, day] = date.split("-").map(Number)
     const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate()
@@ -396,10 +395,10 @@ export function createAnswerId(askId: string): string {
   return `answer:${encodeURIComponent(askId)}`
 }
 
-const askText = Schema.String.pipe(
-  Schema.minLength(1),
-  Schema.maxLength(2000),
-  Schema.filter((value) => value.trim().length > 0 || "must not be blank"),
+const askText = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(2000),
+  Schema.makeFilter((value) => value.trim().length > 0 || "must not be blank"),
 )
 
 const askFields = {
@@ -414,28 +413,28 @@ const askFields = {
 function askLocationIssues(ask: { unitId: string; location: Location }): Schema.FilterIssue[] {
   return ask.location.unitId === ask.unitId
     ? []
-    : [{ path: ["location", "unitId"], message: "must match unitId" }]
+    : [{ path: ["location", "unitId"], issue: "must match unitId" }]
 }
 
 export const AskInputSchema = Schema.Struct({
   type: Schema.Literal("ask"),
   ...askFields,
-}).pipe(Schema.filter(askLocationIssues))
+}).check(Schema.makeFilter(askLocationIssues))
 
 export const AskSchema = Schema.Struct({
   type: Schema.Literal("ask"),
   id: nonEmptyString,
   ...askFields,
-}).pipe(Schema.filter((ask) => {
+}).check(Schema.makeFilter((ask) => {
   const issues = askLocationIssues(ask)
   const expected = createAskId(ask)
-  if (ask.id !== expected) issues.push({ path: ["id"], message: `must equal deterministic id "${expected}"` })
+  if (ask.id !== expected) issues.push({ path: ["id"], issue: `must equal deterministic id "${expected}"` })
   return issues
 }))
 
 const answerFields = {
   askId: nonEmptyString,
-  text: nonEmptyString.pipe(Schema.filter((value) => value.trim().length > 0 || "must not be blank")),
+  text: nonEmptyString.check(Schema.makeFilter((value) => value.trim().length > 0 || "must not be blank")),
   nodeIds: Schema.Array(SlugSchema),
 }
 
@@ -449,22 +448,22 @@ export const AnswerSchema = Schema.Struct({
   id: nonEmptyString,
   ...answerFields,
   answeredAt: isoDateTime,
-}).pipe(Schema.filter((answer) => {
+}).check(Schema.makeFilter((answer) => {
   const expected = createAnswerId(answer.askId)
   return answer.id === expected || {
     path: ["id"],
-    message: `must equal deterministic id "${expected}"`,
+    issue: `must equal deterministic id "${expected}"`,
   }
 }))
 
-export const AskRecordSchema = Schema.Union(AskSchema, AnswerSchema)
+export const AskRecordSchema = Schema.Union([AskSchema, AnswerSchema])
 
 const outcomeFields = {
   courseId: SlugSchema,
   unitId: Schema.optional(SlugSchema),
   questionId: SlugSchema,
   nodeId: SlugSchema,
-  tier: Schema.optional(Schema.Literal("recall", "application")),
+  tier: Schema.optional(Schema.Literals(["recall", "application"])),
   surface: SurfaceSchema,
   status: OutcomeStatusSchema,
   chosenIndex: Schema.optional(nonNegativeInteger),
@@ -475,7 +474,7 @@ const outcomeFields = {
 
 function outcomeAnswerIssues(outcome: { chosenIndex?: number; text?: string }): Schema.FilterIssue[] {
   return outcome.chosenIndex !== undefined && outcome.text !== undefined
-    ? [{ path: ["text"], message: "cannot be combined with chosenIndex" }]
+    ? [{ path: ["text"], issue: "cannot be combined with chosenIndex" }]
     : []
 }
 
@@ -483,25 +482,25 @@ export const OutcomeInputSchema = Schema.Struct({
   type: Schema.Literal("outcome"),
   ...outcomeFields,
   answeredAt: isoDateTime,
-}).pipe(Schema.filter(outcomeAnswerIssues))
+}).check(Schema.makeFilter(outcomeAnswerIssues))
 
 export const AgentOutcomeInputSchema = Schema.Struct({
   type: Schema.Literal("outcome"),
   ...outcomeFields,
   answeredAt: Schema.optional(isoDateTime),
-}).pipe(Schema.filter(outcomeAnswerIssues))
+}).check(Schema.makeFilter(outcomeAnswerIssues))
 
 export const OutcomeSchema = Schema.Struct({
   type: Schema.Literal("outcome"),
   id: nonEmptyString,
   ...outcomeFields,
   answeredAt: isoDateTime,
-}).pipe(
-  Schema.filter((outcome) => {
+}).check(
+  Schema.makeFilter((outcome) => {
     const issues = outcomeAnswerIssues(outcome)
     const expected = createOutcomeId(outcome)
     if (outcome.id !== expected) {
-      issues.push({ path: ["id"], message: `must equal deterministic id "${expected}"` })
+      issues.push({ path: ["id"], issue: `must equal deterministic id "${expected}"` })
     }
     return issues
   }),
@@ -524,17 +523,17 @@ export const GradeOutcomeSchema = Schema.Struct({
   id: nonEmptyString,
   ...gradeFields,
   gradedAt: Schema.optional(isoDateTime),
-}).pipe(
-  Schema.filter((grade) => {
+}).check(
+  Schema.makeFilter((grade) => {
     const expected = createGradeId(grade.outcomeId)
     return grade.id === expected || {
       path: ["id"],
-      message: `must equal deterministic id "${expected}"`,
+      issue: `must equal deterministic id "${expected}"`,
     }
   }),
 )
 
-export const OutcomeRecordSchema = Schema.Union(OutcomeSchema, GradeOutcomeSchema)
+export const OutcomeRecordSchema = Schema.Union([OutcomeSchema, GradeOutcomeSchema])
 
 export type SourceMaterial = Schema.Schema.Type<typeof SourceMaterialSchema>
 export type Location = Schema.Schema.Type<typeof LocationSchema>
@@ -756,19 +755,19 @@ export function log(level: LogLevel, stage: string, fields: LogFields = {}): voi
 
 const decodeOptions = { errors: "all", onExcessProperty: "error" } as const
 
-function decode<S extends Schema.Schema.AnyNoContext>(
+function decode<S extends Schema.Codec<any, any>>(
   schema: S,
   input: unknown,
   file: string,
 ): PlainParseResult<Schema.Schema.Type<S>> {
-  const decoded = Schema.decodeUnknownEither(schema, decodeOptions)(input)
-  if (decoded._tag === "Left") {
-    return { ok: false, error: `${file}: ${ParseResult.TreeFormatter.formatErrorSync(decoded.left)}` }
+  const decoded = Schema.decodeUnknownResult(schema, decodeOptions)(input)
+  if (decoded._tag === "Failure") {
+    return { ok: false, error: `${file}: ${decoded.failure.message}` }
   }
-  return { ok: true, value: decoded.right }
+  return { ok: true, value: decoded.success }
 }
 
-function parseJson<S extends Schema.Schema.AnyNoContext>(
+function parseJson<S extends Schema.Codec<any, any>>(
   text: string,
   file: string,
   schema: S,
@@ -791,7 +790,7 @@ function parseJson<S extends Schema.Schema.AnyNoContext>(
   return result
 }
 
-function serializeJson<S extends Schema.Schema.AnyNoContext>(
+function serializeJson<S extends Schema.Codec<any, any>>(
   value: Schema.Schema.Type<S>,
   file: string,
   schema: S,

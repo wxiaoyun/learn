@@ -62,6 +62,22 @@ async function request(path: string, init?: RequestInit) {
   return { response, text, body: text ? JSON.parse(text) : undefined }
 }
 
+// The streamable HTTP transport is session based and wants both media types on
+// Accept, so MCP calls open a session first and reuse its id.
+const protocolVersion = "2025-06-18"
+
+async function mcp(body: unknown, headers: Record<string, string> = {}) {
+  return request("/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      ...headers,
+    },
+    body: JSON.stringify(body),
+  })
+}
+
 async function putTool(name: string, body: unknown) {
   return request(`/tools/${name}`, {
     method: "POST",
@@ -345,32 +361,39 @@ describe("agent tools", () => {
   })
 
   test("rejects caller supplied outcome ids through MCP", async () => {
-    const result = await request("/mcp", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: {
-          name: "append_outcome",
-          arguments: {
-            outcome: {
-              type: "outcome",
-              id: "caller-id",
-              courseId: "mcp-id-course",
-              questionId: "mcp-question",
-              nodeId: "core-node",
-              surface: "agent",
-              status: "wrong",
-            },
+    const initialized = await mcp({
+      jsonrpc: "2.0",
+      id: 0,
+      method: "initialize",
+      params: { protocolVersion, capabilities: {}, clientInfo: { name: "test", version: "0" } },
+    })
+    expect(initialized.response.status).toBe(200)
+    const session = initialized.response.headers.get("mcp-session-id")!
+    const headers = { "mcp-session-id": session, "mcp-protocol-version": protocolVersion }
+    expect((await mcp({ jsonrpc: "2.0", method: "notifications/initialized" }, headers)).response.status).toBe(202)
+
+    const result = await mcp({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "append_outcome",
+        arguments: {
+          outcome: {
+            type: "outcome",
+            id: "caller-id",
+            courseId: "mcp-id-course",
+            questionId: "mcp-question",
+            nodeId: "core-node",
+            surface: "agent",
+            status: "wrong",
           },
         },
-      }),
-    })
+      },
+    }, headers)
     expect(result.response.status).toBe(200)
     expect(result.body.result.isError).toBe(true)
-    expect(result.body.result.content[0].text).toContain("is unexpected")
+    expect(result.body.result.content[0].text).toContain("Expected no excess property")
   })
 
   test("computes ids and returns newly appended Grades during incremental ingest", async () => {

@@ -1,5 +1,4 @@
-import { McpServer } from "@effect/ai"
-import { CallToolResult, Tool as McpTool } from "@effect/ai/McpSchema"
+import { McpSchema, McpServer } from "effect/unstable/ai"
 import {
   AgentOutcomeInputSchema,
   GradeOutcomeInputSchema,
@@ -24,7 +23,7 @@ import {
   type QuizPlan,
   type Roadmap,
 } from "@learn/core"
-import { Context, Data, Effect, JSONSchema, Layer, ParseResult, Schema } from "effect"
+import { Context, Data, Effect, Layer, Schema } from "effect"
 
 export class ValidationError extends Data.TaggedError("ValidationError")<{
   readonly message: string
@@ -73,10 +72,9 @@ export interface LearningStoreService {
   readonly quizPlanByVideo: (videoId: string) => Effect.Effect<unknown, AppError, ServerLogger>
 }
 
-export class LearningStore extends Context.Tag("@learn/server/LearningStore")<
-  LearningStore,
-  LearningStoreService
->() {}
+export class LearningStore extends Context.Service<LearningStore, LearningStoreService>()(
+  "@learn/server/LearningStore",
+) {}
 
 export interface ServerLoggerService {
   readonly write: (
@@ -86,14 +84,13 @@ export interface ServerLoggerService {
   ) => Effect.Effect<void>
 }
 
-export class ServerLogger extends Context.Tag("@learn/server/ServerLogger")<
-  ServerLogger,
-  ServerLoggerService
->() {}
+export class ServerLogger extends Context.Service<ServerLogger, ServerLoggerService>()(
+  "@learn/server/ServerLogger",
+) {}
 
-const isoDateTime = Schema.String.pipe(
-  Schema.pattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/, {
-    message: () => "must be an ISO date-time",
+const isoDateTime = Schema.String.check(
+  Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/, {
+    message: "must be an ISO date-time",
   }),
 )
 
@@ -106,7 +103,7 @@ type Fields = Schema.Struct.Fields
 type AgentToolDefinition = {
   readonly name: string
   readonly description: string
-  readonly inputSchema: Schema.Schema.AnyNoContext
+  readonly inputSchema: Schema.Codec<any, any>
   readonly jsonSchema: Record<string, unknown>
   readonly handler: (input: any) => Effect.Effect<unknown, AppError, LearningStore | ServerLogger>
 }
@@ -117,10 +114,14 @@ function defineTool<const Name extends string>(
   fields: Fields,
   handler: AgentToolDefinition["handler"],
 ): AgentToolDefinition {
-  const inputSchema = Schema.Struct(fields) as unknown as Schema.Schema.AnyNoContext
-  const emitted = JSONSchema.make(inputSchema) as unknown as Record<string, unknown>
+  const inputSchema = Schema.Struct(fields) as unknown as Schema.Codec<any, any>
+  const emitted = Schema.toJsonSchemaDocument(inputSchema, {
+    onExcessProperty: "error",
+  }).schema as unknown as Record<string, unknown>
+  // An empty Struct emits a bare "not null" schema, which is not an object
+  // schema an MCP client can fill in, so state the empty object shape instead.
   const jsonSchema = Object.keys(fields).length === 0
-    ? { ...emitted, type: "object", properties: {}, additionalProperties: false, anyOf: undefined }
+    ? { type: "object", properties: {}, additionalProperties: false }
     : emitted
   const text = JSON.stringify(jsonSchema)
   if (text.includes('"$ref"') || text.includes('"$defs"')) {
@@ -183,8 +184,8 @@ export const agentTools: ReadonlyArray<AgentToolDefinition> = [
   })),
   defineTool("answer_ask", "Append one Answer to an Ask. The server supplies ids and time.", {
     courseId: SlugSchema,
-    askId: Schema.String.pipe(Schema.minLength(1)),
-    text: Schema.String.pipe(Schema.minLength(1)),
+    askId: Schema.String.check(Schema.isMinLength(1)),
+    text: Schema.String.check(Schema.isMinLength(1)),
     nodeIds: Schema.Array(SlugSchema),
   }, ({ courseId, askId, text, nodeIds }) => Effect.gen(function*() {
     const record = {
@@ -220,12 +221,12 @@ export function invokeTool(name: string, input: unknown): Effect.Effect<unknown,
     const tool = byName.get(name)
     if (!tool) return yield* new NotFoundError({ message: `unknown learning tool "${name}"` })
     yield* logger.write("info", "tool_call", { target: name, status: "start" })
-    const decoded = yield* Schema.decodeUnknown(tool.inputSchema, {
+    const decoded = yield* Schema.decodeUnknownEffect(tool.inputSchema, {
       errors: "all",
       onExcessProperty: "error",
     })(input).pipe(
       Effect.mapError((error) => new ValidationError({
-        message: `${name}: ${ParseResult.TreeFormatter.formatErrorSync(error)}`,
+        message: `${name}: ${error.message}`,
       })),
     )
     return yield* tool.handler(decoded).pipe(
@@ -244,20 +245,21 @@ export const mcpToolsLayer = Layer.effectDiscard(Effect.gen(function*() {
   const services = yield* Effect.context<LearningStore | ServerLogger>()
   for (const definition of agentTools) {
     yield* server.addTool({
-      tool: new McpTool({
+      tool: new McpSchema.Tool({
         name: definition.name,
         description: definition.description,
         inputSchema: definition.jsonSchema,
       }),
+      annotations: Context.empty(),
       handle: (input) => invokeTool(definition.name, input).pipe(
         Effect.provide(services),
         Effect.match({
-          onFailure: (error) => new CallToolResult({
+          onFailure: (error) => new McpSchema.CallToolResult({
             isError: true,
             structuredContent: { error: error.message },
             content: [{ type: "text", text: error.message }],
           }),
-          onSuccess: (result) => new CallToolResult({
+          onSuccess: (result) => new McpSchema.CallToolResult({
             isError: false,
             structuredContent: typeof result === "object" ? result : undefined,
             content: [{ type: "text", text: JSON.stringify(result) }],
@@ -266,4 +268,4 @@ export const mcpToolsLayer = Layer.effectDiscard(Effect.gen(function*() {
       ) as any,
     })
   }
-})).pipe(Layer.provide(McpServer.McpServer.layer))
+}))

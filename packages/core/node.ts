@@ -88,9 +88,9 @@ export function getLearningRoot(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 function checkedSlug(value: string, field: string): string {
-  const decoded = Schema.decodeUnknownEither(SlugSchema)(value)
-  if (decoded._tag === "Left") throw new Error(`${field}: must be a lowercase slug`)
-  return decoded.right
+  const decoded = Schema.decodeUnknownResult(SlugSchema)(value)
+  if (decoded._tag === "Failure") throw new Error(`${field}: must be a lowercase slug`)
+  return decoded.success
 }
 
 export function coursePath(root: string, courseId: string): string {

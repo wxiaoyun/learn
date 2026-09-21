@@ -8,7 +8,7 @@
     "./node": "./node.ts"
   },
   "dependencies": {
-    "effect": "^3.22.2"
+    "effect": "4.0.0-rc.117"
   },
   "devDependencies": {
     "@types/bun": "latest",

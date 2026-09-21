@@ -1,4 +1,3 @@
-import { McpServer } from "@effect/ai"
 import {
   AskInputSchema,
   ClientLogsSchema,
@@ -40,22 +39,22 @@ import {
   quizPlanPath,
   roadmapPath,
 } from "@learn/core/node"
+import { BunHttpServer } from "@effect/platform-bun"
+import { McpProtocol, McpServer } from "effect/unstable/ai"
 import {
-  HttpMiddleware,
   HttpRouter,
+  HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from "@effect/platform"
-import { NodeHttpServer } from "@effect/platform-node"
+} from "effect/unstable/http"
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises"
-import { createServer } from "node:http"
 import { dirname, join } from "node:path"
 import {
   Effect,
   Fiber,
   Layer,
-  ParseResult,
   Schema,
+  Semaphore,
 } from "effect"
 import { makeAgentTurns, type AgentDriver, type AgentTurns } from "./agent-turn"
 import {
@@ -74,25 +73,28 @@ import {
 } from "./tools"
 
 const decodeOptions = { errors: "all", onExcessProperty: "error" } as const
-const OriginSchema = Schema.String.pipe(
-  Schema.pattern(/^chrome-extension:\/\/[^/,\s]+$/, {
-    message: () => "must be chrome-extension://<id>",
+const OriginSchema = Schema.String.check(
+  Schema.isPattern(/^chrome-extension:\/\/[^/,\s]+$/, {
+    message: "must be chrome-extension://<id>",
   }),
 )
 const ServerConfigSchema = Schema.Struct({
-  root: Schema.String.pipe(Schema.minLength(1)),
-  port: Schema.Number.pipe(Schema.int(), Schema.between(0, 65_535)),
+  root: Schema.String.check(Schema.isMinLength(1)),
+  port: Schema.Number.check(Schema.isInt(), Schema.isBetween({ minimum: 0, maximum: 65_535 })),
   allowedOrigins: Schema.Array(OriginSchema),
-  agent: Schema.Literal("claude", "pi", "off"),
-  agentTimeoutMs: Schema.Number.pipe(Schema.int(), Schema.positive()),
-  recapDebounceMs: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  agent: Schema.Literals(["claude", "pi", "off"]),
+  agentTimeoutMs: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
+  recapDebounceMs: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
 })
-const VideoParamsSchema = Schema.Struct({ videoId: Schema.String.pipe(Schema.minLength(1)) })
-const GradeParamsSchema = Schema.Struct({ outcomeId: Schema.String.pipe(Schema.minLength(1)) })
-const AskParamsSchema = Schema.Struct({ askId: Schema.String.pipe(Schema.minLength(1)) })
-const ToolParamsSchema = Schema.Struct({ name: Schema.String.pipe(Schema.minLength(1)) })
+const VideoParamsSchema = Schema.Struct({ videoId: Schema.String.check(Schema.isMinLength(1)) })
+const GradeParamsSchema = Schema.Struct({ outcomeId: Schema.String.check(Schema.isMinLength(1)) })
+const AskParamsSchema = Schema.Struct({ askId: Schema.String.check(Schema.isMinLength(1)) })
+const ToolParamsSchema = Schema.Struct({ name: Schema.String.check(Schema.isMinLength(1)) })
 const ReviewQuerySchema = Schema.Struct({ courseId: Schema.optional(SlugSchema) })
-const OutcomesBodySchema = Schema.Union(OutcomeInputSchema, Schema.Array(OutcomeInputSchema).pipe(Schema.minItems(1)))
+const OutcomesBodySchema = Schema.Union([
+  OutcomeInputSchema,
+  Schema.Array(OutcomeInputSchema).check(Schema.isMinLength(1)),
+])
 
 export type ServerConfig = Schema.Schema.Type<typeof ServerConfigSchema>
 
@@ -108,7 +110,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean)
-  const decoded = Schema.decodeUnknownEither(ServerConfigSchema, decodeOptions)({
+  const decoded = Schema.decodeUnknownResult(ServerConfigSchema, decodeOptions)({
     root: getLearningRoot(env),
     port,
     allowedOrigins,
@@ -116,10 +118,10 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
     agentTimeoutMs,
     recapDebounceMs,
   })
-  if (decoded._tag === "Left") {
-    throw new Error(ParseResult.TreeFormatter.formatErrorSync(decoded.left))
+  if (decoded._tag === "Failure") {
+    throw new Error(decoded.failure.message)
   }
-  return decoded.right
+  return decoded.success
 }
 
 function loggerService(root: string): ServerLoggerService {
@@ -289,8 +291,8 @@ function roadmaps(root: string): Effect.Effect<ReadonlyArray<Roadmap>, AppError,
 function makeStore(root: string, turns: AgentTurns): LearningStoreService {
   // ponytail: one global append queue fits one learner. Use per-course queues if outcome throughput grows.
   let appendQueue = Promise.resolve()
-  const roadmapMutex = Effect.unsafeMakeSemaphore(1)
-  const quizPlanMutex = Effect.unsafeMakeSemaphore(1)
+  const roadmapMutex = Semaphore.makeUnsafe(1)
+  const quizPlanMutex = Semaphore.makeUnsafe(1)
   const queuedAppend = <T>(operation: () => Promise<T>): Promise<T> => {
     const pending = appendQueue.then(operation)
     appendQueue = pending.then(() => undefined, () => undefined)
@@ -708,16 +710,16 @@ function makeStore(root: string, turns: AgentTurns): LearningStoreService {
 function decodeHttp<A, I>(
   stage: string,
   target: string,
-  schema: Schema.Schema<A, I>,
+  schema: Schema.Codec<A, I>,
   input: unknown,
 ): Effect.Effect<A, ValidationError, ServerLogger> {
   return Effect.gen(function*() {
     const logger = yield* ServerLogger
     yield* logger.write("info", stage, { target, status: "start" })
-    return yield* Schema.decodeUnknown(schema, decodeOptions)(input).pipe(
+    return yield* Schema.decodeUnknownEffect(schema, decodeOptions)(input).pipe(
       Effect.tap(() => logger.write("info", stage, { target, status: "ok" })),
       Effect.mapError((error) => new ValidationError({
-        message: ParseResult.TreeFormatter.formatErrorSync(error),
+        message: error.message,
       })),
       Effect.tapError((error) => logger.write("error", stage, {
         target,
@@ -730,7 +732,7 @@ function decodeHttp<A, I>(
 
 function body<A, I>(
   stage: string,
-  schema: Schema.Schema<A, I>,
+  schema: Schema.Codec<A, I>,
 ): Effect.Effect<A, ValidationError, HttpServerRequest.HttpServerRequest | ServerLogger> {
   return Effect.gen(function*() {
     const request = yield* HttpServerRequest.HttpServerRequest
@@ -749,16 +751,10 @@ function statusOf(error: AppError): number {
   return 500
 }
 
-class AppRouter extends HttpRouter.Tag("@learn/server/Router")<
-  AppRouter,
-  LearningStore | ServerLogger,
-  AppError
->() {}
-
 function handled<A extends HttpServerResponse.HttpServerResponse, R>(
   effect: Effect.Effect<A, AppError, R>,
 ): Effect.Effect<A | HttpServerResponse.HttpServerResponse, never, R | ServerLogger> {
-  return effect.pipe(Effect.catchAll((error) => Effect.gen(function*() {
+  return effect.pipe(Effect.catch((error) => Effect.gen(function*() {
     const logger = yield* ServerLogger
     yield* logger.write("error", "http_request", {
       target: "request",
@@ -766,51 +762,51 @@ function handled<A extends HttpServerResponse.HttpServerResponse, R>(
       error: error.message,
     })
     const details = error instanceof NotFoundError ? error.details : undefined
-    return HttpServerResponse.unsafeJson({ error: error.message, ...details }, { status: statusOf(error) })
+    return HttpServerResponse.jsonUnsafe({ error: error.message, ...details }, { status: statusOf(error) })
   })))
 }
 
 function routes(turns: AgentTurns) {
-  return AppRouter.use((router) => Effect.all([
-    router.get("/health", Effect.succeed(HttpServerResponse.unsafeJson({ status: "ok" }))),
-    router.get("/quiz-plans/by-video/:videoId", handled(Effect.gen(function*() {
+  return HttpRouter.use((router) => Effect.all([
+    router.add("GET", "/health", Effect.succeed(HttpServerResponse.jsonUnsafe({ status: "ok" }))),
+    router.add("GET", "/quiz-plans/by-video/:videoId", handled(Effect.gen(function*() {
       const params = yield* HttpRouter.params
       const { videoId } = yield* decodeHttp("decode_path", "/quiz-plans/by-video/:videoId", VideoParamsSchema, params)
-      return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.quizPlanByVideo(videoId)))
+      return HttpServerResponse.jsonUnsafe(yield* Effect.flatMap(LearningStore, (store) => store.quizPlanByVideo(videoId)))
     }))),
-    router.get("/asks/by-video/:videoId", handled(Effect.gen(function*() {
+    router.add("GET", "/asks/by-video/:videoId", handled(Effect.gen(function*() {
       const params = yield* HttpRouter.params
       const { videoId } = yield* decodeHttp("decode_path", "/asks/by-video/:videoId", VideoParamsSchema, params)
-      return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.asksByVideo(videoId)))
+      return HttpServerResponse.jsonUnsafe(yield* Effect.flatMap(LearningStore, (store) => store.asksByVideo(videoId)))
     }))),
-    router.get("/asks/:askId", handled(Effect.gen(function*() {
+    router.add("GET", "/asks/:askId", handled(Effect.gen(function*() {
       const params = yield* HttpRouter.params
       const { askId } = yield* decodeHttp("decode_path", "/asks/:askId", AskParamsSchema, params)
-      return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.getAsk(askId)))
+      return HttpServerResponse.jsonUnsafe(yield* Effect.flatMap(LearningStore, (store) => store.getAsk(askId)))
     }))),
-    router.get("/grades/:outcomeId", handled(Effect.gen(function*() {
+    router.add("GET", "/grades/:outcomeId", handled(Effect.gen(function*() {
       const params = yield* HttpRouter.params
       const { outcomeId } = yield* decodeHttp("decode_path", "/grades/:outcomeId", GradeParamsSchema, params)
-      return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.getGrade(outcomeId)))
+      return HttpServerResponse.jsonUnsafe(yield* Effect.flatMap(LearningStore, (store) => store.getGrade(outcomeId)))
     }))),
-    router.get("/reviews/due", handled(Effect.gen(function*() {
+    router.add("GET", "/reviews/due", handled(Effect.gen(function*() {
       const request = yield* HttpServerRequest.HttpServerRequest
       const query = Object.fromEntries(new URL(request.url, "http://127.0.0.1").searchParams)
       const { courseId } = yield* decodeHttp("decode_query", "/reviews/due", ReviewQuerySchema, query)
-      return HttpServerResponse.unsafeJson(yield* Effect.flatMap(LearningStore, (store) => store.getDueReviews(courseId)))
+      return HttpServerResponse.jsonUnsafe(yield* Effect.flatMap(LearningStore, (store) => store.getDueReviews(courseId)))
     }))),
-    router.post("/asks", handled(Effect.gen(function*() {
+    router.add("POST", "/asks", handled(Effect.gen(function*() {
       if (!turns.asksEnabled()) {
-        return HttpServerResponse.unsafeJson({ error: "asks are disabled because the learning agent is off" }, { status: 503 })
+        return HttpServerResponse.jsonUnsafe({ error: "asks are disabled because the learning agent is off" }, { status: 503 })
       }
       const input = yield* body("decode_ask_body", AskInputSchema)
       const ask: Ask = { ...input, id: createAskId(input) }
       const store = yield* LearningStore
       const result = yield* store.appendAsk(ask)
       if ((result as { status?: string }).status === "appended") turns.handleAsk(ask)
-      return HttpServerResponse.unsafeJson(result)
+      return HttpServerResponse.jsonUnsafe(result)
     }))),
-    router.post("/outcomes", handled(Effect.gen(function*() {
+    router.add("POST", "/outcomes", handled(Effect.gen(function*() {
       const decoded = yield* body("decode_outcomes_body", OutcomesBodySchema)
       const inputs = Array.isArray(decoded) ? decoded : [decoded]
       const store = yield* LearningStore
@@ -824,9 +820,9 @@ function routes(turns: AgentTurns) {
         results.push(result)
         if ((result as { status?: string }).status === "appended") turns.handleOutcome(outcome)
       }
-      return HttpServerResponse.unsafeJson({ results })
+      return HttpServerResponse.jsonUnsafe({ results })
     }))),
-    router.post("/logs", handled(Effect.gen(function*() {
+    router.add("POST", "/logs", handled(Effect.gen(function*() {
       const decoded: ClientLogs = yield* body("decode_logs_body", ClientLogsSchema)
       const logger = yield* ServerLogger
       for (const line of decoded.lines) {
@@ -838,16 +834,16 @@ function routes(turns: AgentTurns) {
           error: line.error,
         })
       }
-      return HttpServerResponse.unsafeJson({ appended: decoded.lines.length })
+      return HttpServerResponse.jsonUnsafe({ appended: decoded.lines.length })
     }))),
-    router.post("/tools/:name", handled(Effect.gen(function*() {
+    router.add("POST", "/tools/:name", handled(Effect.gen(function*() {
       const params = yield* HttpRouter.params
       const { name } = yield* decodeHttp("decode_path", "/tools/:name", ToolParamsSchema, params)
       const request = yield* HttpServerRequest.HttpServerRequest
       const input = yield* request.json.pipe(
         Effect.mapError((error) => new ValidationError({ message: `invalid JSON body: ${String(error)}` })),
       )
-      return HttpServerResponse.unsafeJson(yield* invokeTool(name, input))
+      return HttpServerResponse.jsonUnsafe(yield* invokeTool(name, input))
     }))),
   ], { discard: true }))
 }
@@ -873,7 +869,7 @@ function middleware(allowedOrigins: ReadonlyArray<string>) {
         status: "rejected",
         error: "origin not allowed",
       })
-      return HttpServerResponse.unsafeJson({ error: "origin not allowed" }, { status: 403 })
+      return HttpServerResponse.jsonUnsafe({ error: "origin not allowed" }, { status: 403 })
     }
     if (request.method === "OPTIONS" && origin) {
       return HttpServerResponse.empty({
@@ -888,50 +884,65 @@ function middleware(allowedOrigins: ReadonlyArray<string>) {
     }
     return yield* app
   }).pipe(
-    Effect.catchAll((error: AppError | unknown) => Effect.gen(function*() {
+    // Every route already maps its own failures, so what reaches here is a
+    // transport failure the server answers for. Log it and let it through.
+    Effect.tapError((error: unknown) => Effect.gen(function*() {
       const logger = yield* ServerLogger
-      const known = error instanceof ValidationError
-        || error instanceof NotFoundError
-        || error instanceof ConflictError
-        || error instanceof StorageError
-      const appError = known
-        ? error
-        : new StorageError({ message: error instanceof Error ? error.message : String(error) })
       yield* logger.write("error", "http_request", {
         target: "request",
         status: "failed",
-        error: appError.message,
+        error: error instanceof Error ? error.message : String(error),
       })
-      return HttpServerResponse.unsafeJson({ error: appError.message }, { status: statusOf(appError) })
     })),
   )
 }
 
-function appLayer(config: ServerConfig, server: ReturnType<typeof createServer>, turns: AgentTurns, logger: ServerLoggerService) {
+function appLayer(
+  config: ServerConfig,
+  turns: AgentTurns,
+  logger: ServerLoggerService,
+  onListening: (port: number) => void,
+) {
   const LoggerLive = Layer.succeed(ServerLogger, logger)
   const StoreLive = Layer.succeed(LearningStore, makeStore(config.root, turns))
-  const httpMiddleware = (app: any) => middleware(config.allowedOrigins)(
-    HttpMiddleware.cors({
-      allowedOrigins: config.allowedOrigins,
-      allowedMethods: ["GET", "POST", "OPTIONS"],
-      allowedHeaders: ["content-type"],
-    })(app),
-  )
-  return AppRouter.serve(httpMiddleware as any).pipe(
-    Layer.provide(Layer.mergeAll(
+  // Built only after the request handler is registered, so the reported port
+  // never points at a socket that still answers with the placeholder 404.
+  const ListeningLive = Layer.effectDiscard(Effect.gen(function*() {
+    const server = yield* HttpServer.HttpServer
+    onListening(server.address._tag === "UnixPathAddress" ? config.port : server.address.port)
+  }))
+  const served = HttpRouter.serve(
+    Layer.mergeAll(
       routes(turns),
-      McpServer.layerHttp({
+      HttpRouter.cors({
+        allowedOrigins: config.allowedOrigins,
+        allowedMethods: ["GET", "POST", "OPTIONS"],
+        allowedHeaders: ["content-type"],
+      }),
+      Layer.provide(mcpToolsLayer, McpServer.layerHttp({
         name: "learning",
         version: "0.1.0",
         path: "/mcp",
-        routerTag: AppRouter,
-      }),
-    )),
-    Layer.provide(mcpToolsLayer),
+        protocols: [
+          McpProtocol.v2026_07_28,
+          McpProtocol.v2025_11_25,
+          McpProtocol.v2025_06_18,
+          McpProtocol.v2025_03_26,
+          McpProtocol.v2024_11_05,
+        ],
+      })),
+    ),
+    {
+      disableLogger: true,
+      disableListenLog: true,
+      middleware: middleware(config.allowedOrigins),
+    },
+  )
+  return Layer.provide(ListeningLive, served).pipe(
     Layer.provide(StoreLive),
     Layer.provide(LoggerLive),
-    Layer.provide(NodeHttpServer.layer(() => server, {
-      host: "127.0.0.1",
+    Layer.provide(BunHttpServer.layer({
+      hostname: "127.0.0.1",
       port: config.port,
     })),
   )
@@ -946,34 +957,33 @@ export async function startServer(
   input: ServerConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<RunningServer> {
-  const decoded = Schema.decodeUnknownEither(ServerConfigSchema, decodeOptions)(input)
-  if (decoded._tag === "Left") throw new Error(ParseResult.TreeFormatter.formatErrorSync(decoded.left))
-  const server = createServer()
-  const logger = loggerService(decoded.right.root)
+  const decoded = Schema.decodeUnknownResult(ServerConfigSchema, decodeOptions)(input)
+  if (decoded._tag === "Failure") throw new Error(decoded.failure.message)
+  const config = decoded.success
+  const logger = loggerService(config.root)
+  let boundPort: number | undefined
   const turns = makeAgentTurns({
-    root: decoded.right.root,
-    driver: decoded.right.agent,
-    timeoutMs: decoded.right.agentTimeoutMs,
-    recapDebounceMs: decoded.right.recapDebounceMs,
-    port: () => {
-      const address = server.address()
-      return address && typeof address !== "string" ? address.port : decoded.right.port
-    },
+    root: config.root,
+    driver: config.agent,
+    timeoutMs: config.agentTimeoutMs,
+    recapDebounceMs: config.recapDebounceMs,
+    port: () => boundPort ?? config.port,
     env,
     logger,
   })
-  const program = Layer.launch(appLayer(decoded.right, server, turns, logger)) as Effect.Effect<never, unknown, never>
+  const listening = Promise.withResolvers<number>()
+  const program = Layer.launch(appLayer(config, turns, logger, (port) => {
+    boundPort = port
+    listening.resolve(port)
+  })) as Effect.Effect<never, unknown, never>
   const fiber = Effect.runFork(program)
-  const deadline = Date.now() + 5_000
-  while (!server.listening && Date.now() < deadline) await Bun.sleep(10)
-  if (!server.listening) {
+  const port = await Promise.race([listening.promise, Bun.sleep(5_000).then(() => undefined)])
+  if (port === undefined) {
     await Effect.runPromise(Fiber.interrupt(fiber))
     throw new Error("learning server did not start within 5 seconds")
   }
-  const address = server.address()
-  if (!address || typeof address === "string") throw new Error("learning server has no TCP address")
   return {
-    port: address.port,
+    port,
     close: async () => {
       await turns.close()
       await Effect.runPromise(Fiber.interrupt(fiber))
