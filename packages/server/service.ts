@@ -1,5 +1,5 @@
 import { getLearningRoot } from "@learn/core/node"
-import { mkdir, realpath, rm, writeFile } from "node:fs/promises"
+import { mkdir, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 
@@ -8,8 +8,9 @@ const action = process.argv[2]
 const plist = join(homedir(), "Library", "LaunchAgents", `${label}.plist`)
 const root = getLearningRoot()
 const logs = join(root, ".logs")
-const entry = resolve(import.meta.dir, "index.ts")
-const bunPath = await realpath(process.execPath)
+// launchd runs the compiled binary directly, so the agent does not depend on
+// where bun is installed. `mise run service:install` builds it first.
+const binary = resolve(import.meta.dir, "dist/learning-server")
 const uid = process.getuid?.()
 if (uid === undefined) throw new Error("launchd service installation requires macOS")
 
@@ -31,7 +32,27 @@ async function bootoutQuietly(): Promise<void> {
   await Bun.spawn(["launchctl", "bootout", `gui/${uid}`, plist], { stdout: "ignore", stderr: "ignore" }).exited
 }
 
+// launchd reads no shell profile, so the plist carries PATH itself. Take it
+// from a clean login shell (.zprofile) instead of the shell running the
+// install, which drags in session-only entries like virtualenvs.
+async function loginShellPath(): Promise<string> {
+  const shell = process.env.SHELL?.trim() || "/bin/zsh"
+  const child = Bun.spawn([shell, "-lc", 'printf %s "$PATH"'], {
+    env: { HOME: homedir(), USER: process.env.USER ?? "" },
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  const path = (await new Response(child.stdout).text()).trim()
+  const code = await child.exited
+  if (code !== 0 || !path) {
+    console.warn(JSON.stringify({ stage: "login_shell_path", target: shell, status: "fallback", error: `exit code ${code}` }))
+    return process.env.PATH?.trim() || "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+  }
+  return path
+}
+
 if (action === "install") {
+  if (!(await Bun.file(binary).exists())) throw new Error(`${binary} is missing, run: bun run --cwd packages/server build`)
   await mkdir(dirname(plist), { recursive: true })
   await mkdir(logs, { recursive: true })
   const environment = {
@@ -40,7 +61,7 @@ if (action === "install") {
     LEARNING_ALLOWED_ORIGINS: process.env.LEARNING_ALLOWED_ORIGINS ?? "",
     LEARNING_AGENT: process.env.LEARNING_AGENT?.trim() || "claude",
     LEARNING_AGENT_TIMEOUT_MS: process.env.LEARNING_AGENT_TIMEOUT_MS?.trim() || "300000",
-    PATH: process.env.PATH?.trim() || "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+    PATH: await loginShellPath(),
   }
   const variables = Object.entries(environment)
     .map(([key, value]) => `      <key>${xml(key)}</key>\n      <string>${xml(value)}</string>`)
@@ -53,9 +74,7 @@ if (action === "install") {
     <string>${label}</string>
     <key>ProgramArguments</key>
     <array>
-      <string>${xml(bunPath)}</string>
-      <string>run</string>
-      <string>${xml(entry)}</string>
+      <string>${xml(binary)}</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>

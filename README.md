@@ -48,7 +48,9 @@ mise run setup
 bun run server
 ```
 
-To keep it running across logins on macOS, `mise run service:install` writes and loads a LaunchAgent, and `mise run service:uninstall` removes it. The environment variables below are read at install time and written into the LaunchAgent.
+`bun run server` compiles the server into a single binary at `packages/server/dist/learning-server` and runs it. `bun run --cwd packages/server dev` runs it from source instead. With `LEARNING_AGENT=pi` the binary loads the pi extension through the `.pi` link that `setup` creates in the learning directory.
+
+To keep it running across logins on macOS, `mise run service:install` builds the binary, then writes and loads a LaunchAgent that runs it. Run it again after changing server code. `mise run service:uninstall` removes it. The environment variables below are read at install time and written into the LaunchAgent.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

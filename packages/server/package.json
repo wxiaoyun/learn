@@ -7,7 +7,9 @@
     "./tools": "./tools.ts"
   },
   "scripts": {
-    "start": "bun run index.ts",
+    "build": "bun build --compile index.ts --outfile dist/learning-server",
+    "start": "bun run build && ./dist/learning-server",
+    "dev": "bun run index.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

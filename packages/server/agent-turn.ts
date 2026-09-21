@@ -17,8 +17,12 @@ import {
 } from "@learn/core"
 import { asksPath, nodesPath, outcomesPath, quizPlanPath, roadmapPath } from "@learn/core/node"
 import { mkdir, readFile, readdir } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { Effect } from "effect"
+// Text imports embed the skills in the compiled binary, where import.meta.dir
+// points into the virtual bundle filesystem instead of the repo.
+import primer from "../core/skills/primer/SKILL.md" with { type: "text" }
+import teach from "../core/skills/teach/SKILL.md" with { type: "text" }
 import { agentTools, type ServerLoggerService } from "./tools"
 
 export type AgentDriver = "claude" | "pi" | "off"
@@ -48,9 +52,6 @@ type GradingContext = {
   readonly node: Node
   readonly question: { readonly prompt: string; readonly rubric: string }
 }
-
-const primerSkill = resolve(import.meta.dir, "../core/skills/primer/SKILL.md")
-const teachSkill = resolve(import.meta.dir, "../core/skills/teach/SKILL.md")
 
 function parsed<T>(result: { ok: true; value: T } | { ok: false; error: string }): T {
   if (!result.ok) throw new Error(result.error)
@@ -421,11 +422,7 @@ function teachOptions(text: string): string {
   return text.slice(start, end).trim()
 }
 
-async function generationPrompt(courseId: string, unit: Unit): Promise<string> {
-  const [primer, teach] = await Promise.all([
-    readFile(primerSkill, "utf8"),
-    readFile(teachSkill, "utf8"),
-  ])
+function generationPrompt(courseId: string, unit: Unit): string {
   return `Generate the Quiz plan for Course ${courseId}, Unit ${unit.id} ("${unit.title}"). No learner is present.
 
 Skip every step that needs the learner, including probing, teaching, asking questions, waiting for approval, and learner-facing messages. Call get_course_state and fold the learner's weak Nodes into the Quiz plan. Read the Unit's Source material under sources/. If this Unit has no usable Source material or transcript, do nothing. Otherwise do only Node creation, Quiz plan generation, Source material verification, put_nodes, and put_quiz_plan, then stop.
@@ -472,7 +469,9 @@ function commandFor(config: AgentTurnsConfig, prompt: string): string[] {
     "pi", "-p",
     "--no-session",
     "--no-extensions",
-    "--extension", resolve(import.meta.dir, "../pi/extensions/learning-tools.ts"),
+    // pi needs a real file, and the compiled binary has no repo next to it.
+    // `mise run setup` links packages/pi into the learning directory as .pi.
+    "--extension", join(config.root, ".pi/extensions/learning-tools.ts"),
     "--no-skills",
     "--no-prompt-templates",
     "--no-themes",
@@ -644,7 +643,7 @@ export function makeAgentTurns(config: AgentTurnsConfig) {
     runAgentTurn({
       kind: { type: "quiz-plan", unitId },
       courseId,
-      prompt: await generationPrompt(courseId, unit),
+      prompt: generationPrompt(courseId, unit),
     })
   }
 

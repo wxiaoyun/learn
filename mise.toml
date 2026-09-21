@@ -41,8 +41,13 @@ claude plugin uninstall learning@learning --scope local
 claude plugin marketplace remove learning
 """
 
+[tasks.build]
+description = "Compile the learning server into a single binary"
+run = "bun run --cwd packages/server build"
+
 [tasks."service:install"]
-description = "Install and load the learning server as a launchd agent (macOS)"
+description = "Build the learning server binary, then install and load it as a launchd agent (macOS)"
+depends = ["build"]
 run = "bun run packages/server/service.ts install"
 
 [tasks."service:uninstall"]
