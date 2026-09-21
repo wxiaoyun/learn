@@ -5,7 +5,7 @@ import {
   deriveDailyStreak,
   deriveReviewStates,
   placementKey,
-  selectQuestions,
+  placementQuestions,
   selectReviewQuestion,
   type GradeOutcome,
   type Outcome,
@@ -72,76 +72,24 @@ describe("placement identity", () => {
   })
 })
 
-describe("tier selection", () => {
-  const pool = [
-    choice("a-default", "node-a", "application"),
-    choice("a-recall", "node-a", "recall"),
-    choice("a-application", "node-a", "application"),
-    choice("b-default", "node-b", "recall"),
-    choice("b-recall", "node-b", "recall"),
-    choice("b-application", "node-b", "application"),
-    {
-      id: "a-explain",
-      nodeId: "node-a",
-      tier: "application" as const,
-      kind: "explain-back" as const,
-      prompt: "Explain node A.",
-      rubric: "Explain node A clearly.",
-    },
-  ]
-
-  const selected = (recentGradedResults: readonly ("correct" | "wrong")[]) => selectQuestions({
-    placement: pause(["a-default"]),
-    questionPool: pool,
-    answeredQuestionIds: new Set<string>(),
-    recentGradedResults,
-  }).map((question) => question.id)
-
-  test("uses recall below 0.75, authored defaults through 0.9, and application above 0.9", () => {
-    expect(selected(["correct", "correct", "correct", "wrong", "wrong"])).toEqual(["a-recall"])
-    expect(selected(["correct", "correct", "correct", "correct", "correct", "correct", "wrong", "wrong"])).toEqual(["a-default"])
-    expect(selected(["correct", "correct", "correct", "correct", "wrong"])).toEqual(["a-default"])
-    expect(selected(["correct", "correct", "correct", "correct", "correct", "correct", "correct", "correct", "correct", "wrong"])).toEqual(["a-default"])
-    expect(selectQuestions({
-      placement: pause(["b-default"], ["node-b"]),
-      questionPool: pool,
-      answeredQuestionIds: new Set<string>(),
-      recentGradedResults: ["wrong", ...Array<"correct">(10).fill("correct")],
-    }).map((question) => question.id)).toEqual(["b-application"]) 
-  })
-
-  test("keeps authored defaults with fewer than five graded Outcomes", () => {
-    expect(selected(["wrong", "wrong", "wrong", "wrong"])).toEqual(["a-default"])
-  })
-
-  test("avoids answered Questions when an unanswered wanted Tier exists", () => {
-    expect(selectQuestions({
-      placement: pause(["a-default", "b-default"], ["node-a", "node-b"]),
-      questionPool: pool,
-      answeredQuestionIds: new Set(["a-default", "b-default"]),
-      recentGradedResults: ["correct", "correct", "correct", "correct", "wrong"],
-    }).map((question) => question.id)).toEqual(["a-application", "b-recall"])
-  })
-
-  test("falls back to the authored Question when no wanted Tier candidate exists", () => {
-    expect(selectQuestions({
-      placement: pause(["a-default"]),
-      questionPool: [pool[0]],
-      answeredQuestionIds: new Set(["a-default"]),
-      recentGradedResults: ["wrong", "wrong", "wrong", "correct", "correct"],
-    }).map((question) => question.id)).toEqual(["a-default"])
-  })
-
-  test("is deterministic and never selects an Explain-back", () => {
-    const input = {
-      placement: pause(["a-default"]),
-      questionPool: [pool[0], pool[5], pool[2]],
-      answeredQuestionIds: new Set<string>(),
-      recentGradedResults: Array<"correct">(10).fill("correct"),
-    }
-    expect(selectQuestions(input).map((question) => question.id)).toEqual(["a-default"])
-    expect(selectQuestions(input)).toEqual(selectQuestions(input))
-    expect(selectQuestions(input).every((question) => question.kind === "choice")).toBe(true)
+describe("placement questions", () => {
+  test("returns the authored choice Questions in order and never an Explain-back", () => {
+    const pool = [
+      choice("a-recall", "node-a", "recall"),
+      choice("a-application", "node-a", "application"),
+      {
+        id: "a-explain",
+        nodeId: "node-a",
+        tier: "application" as const,
+        kind: "explain-back" as const,
+        prompt: "Explain node A.",
+        rubric: "Explain node A clearly.",
+      },
+    ]
+    expect(placementQuestions(pause(["a-application", "a-explain", "a-recall"]), pool).map((question) => question.id))
+      .toEqual(["a-application", "a-recall"])
+    expect(placementQuestions({ kind: "pre-question", questionId: "a-recall" }, pool).map((question) => question.id))
+      .toEqual(["a-recall"])
   })
 })
 

@@ -105,6 +105,10 @@ _Avoid_: Free response, essay question
 **Tier**:
 The difficulty level of a question within a node's pool. Recall tiers warm up, application tiers count as evidence of understanding.
 
+**Step question**:
+An application tier question that tests one link of a node's reasoning, such as which assumption allows a given step.
+_Avoid_: Bridge question, scaffold question
+
 **Outcome**:
 One recorded result for one question: correct, wrong, skipped, flagged, or awaiting a grade.
 _Avoid_: Result, answer, score

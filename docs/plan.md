@@ -19,8 +19,10 @@ One learning system with one model of what the learner knows, across every surfa
 
 - A pause quiz sits at a node boundary, not on a timer. Roughly one per 5 to 8 minutes of video, at most 2 questions each.
 - About 60 percent recall tier and 40 percent application tier. Easy recall questions are wanted: they are a quick win when known and a good catch when not.
+- A node's questions form a ladder: recall, then step questions, then application. A step question tests one link of the reasoning, such as which assumption allows a step. A derivation node gets one step question per assumption and per step. Step questions are application tier.
+- Pause quizzes mix both tiers, so the recap quiz is never the first application question on a node.
 - One pre-question per major segment.
-- A recap quiz has 5 to 8 questions, application heavy, unanswered and missed items first, plus one explain-back.
+- A recap quiz has 5 to 8 questions, application heavy, unanswered and missed items first, plus one explain-back. The explain-back asks for one thing, and every part of its rubric is already tested by a choice question placed earlier in the plan.
 - Question options follow the construction procedure in the `teach` skill.
 - Every question names exactly one node.
 
@@ -36,7 +38,7 @@ One learning system with one model of what the learner knows, across every surfa
 
 ### Evidence and review
 
-- Tier selection steers the rolling success rate toward about 85 percent. When a pre-question or pause quiz triggers, a pure core function re-picks its questions from the pool for the same nodes, using the last 10 graded choice outcomes: below 0.75 it prefers recall tier, above 0.9 application tier, otherwise the authored questions stand. With fewer than 5 graded outcomes the authored questions stand. No randomness.
+- The authored questions of a placement always stand. There is no target success rate and nothing re-picks questions at learn time. Difficulty adapts between units, through the next primer.
 - Only application tier outcomes promote a node. Recall outcomes are warm-up.
 - Spaced review uses Leitner intervals of 1, 3, 7, and 21 days, reset on a miss. Move to FSRS only if the intervals feel wrong after a month of real use. A node enters review at its first correct application tier outcome. A correct review on or after the due time advances one box, an early one changes nothing, a wrong one resets. An explain-back graded `partial` or `not-understood` counts as wrong. Boxes, due times, and the streak are derived from `outcomes.jsonl` on every call. Nothing is stored and no scheduler runs.
 - Question ids are unique across a whole course, because a review outcome carries no unit id.
@@ -97,7 +99,7 @@ Agent tools are defined once in `packages/server/tools.ts`. Claude Code reaches 
 HTTP for the browser extension and the mobile surface:
 
 - `GET /health`
-- `GET /quiz-plans/by-video/:videoId`: the course id, unit id, quiz plan, three lists of question ids (answered, meaning any outcome other than skipped, then correct, then wrong by the latest outcome per question), and the last 10 graded results for the course, which seed tier selection. 404 when no plan exists. When the video belongs to a roadmap unit that has no quiz plan yet, the 404 body says so and carries a hint derived on each request: "visit the agent first" with up to three node titles when a prerequisite node was last answered wrong, "a quiz plan is being generated, reload in a minute" while a generation turn is pending, else "no quiz plan yet, run a primer first". A video that belongs to no course gets a plain 404 and the extension stays silent.
+- `GET /quiz-plans/by-video/:videoId`: the course id, unit id, quiz plan, three lists of question ids (answered, meaning any outcome other than skipped, then correct, then wrong by the latest outcome per question). 404 when no plan exists. When the video belongs to a roadmap unit that has no quiz plan yet, the 404 body says so and carries a hint derived on each request: "visit the agent first" with up to three node titles when a prerequisite node was last answered wrong, "a quiz plan is being generated, reload in a minute" while a generation turn is pending, else "no quiz plan yet, run a primer first". A video that belongs to no course gets a plain 404 and the extension stays silent.
 - `GET /reviews/due`: the same payload as `get_due_reviews`.
 - `POST /asks`: one ask, answered at once with its id, then one agent turn is queued. 503 with nothing stored when agent turns are off.
 - `GET /asks/:askId`: the ask with its answer or `answer: null`, plus a `failed` flag when the turn failed or timed out. `GET /asks/by-video/:videoId`: the unit's asks with answers, oldest first.
@@ -124,7 +126,7 @@ HTTP for the browser extension and the mobile surface:
 5. Claude Code plugin packaging.
 6. Browser extension: pause quiz, pre-question, recap quiz, flag, toasts.
 7. Outcome ingest in `learning-progress` plus the `teach` edits. The loop is closed after this step.
-8. Tier selection toward 85 percent.
+8. Tier selection toward 85 percent. Built, then removed. See ADR 0002.
 9. Spaced review in the browser extension and on the agent surface.
 10. Explain-back with harness-agnostic headless grading (`claude -p` and `pi -p` drivers).
 11. Headless generation of the next unit's quiz plan after a recap quiz. If a prerequisite node was missed, a toast says to visit the agent first and no plan is generated.
@@ -132,7 +134,7 @@ HTTP for the browser extension and the mobile surface:
 
 ### `teach` edits in milestone 7
 
-Replace the original author's "he" framing with "the learner". Add the increment rule with the 85 percent target. Add "outcomes are the prior". Add a tool name mapping so the skill works on Claude Code, where `quiz` maps onto `AskUserQuestion`. Tune further from real sessions.
+Replace the original author's "he" framing with "the learner". Add the increment rule. Add "outcomes are the prior". Add a tool name mapping so the skill works on Claude Code, where `quiz` maps onto `AskUserQuestion`. Tune further from real sessions.
 
 ## Backlog
 

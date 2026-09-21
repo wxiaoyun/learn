@@ -155,7 +155,6 @@ describe("HTTP boundaries", () => {
     expect(hit.body.correctQuestionIds).toEqual(["question-1"])
     expect(hit.body.wrongQuestionIds).toEqual([])
     expect(hit.body.answeredPlacementKeys).toEqual([])
-    expect(hit.body.recentGradedResults).toEqual(["wrong", "correct"])
 
     const miss = await request("/quiz-plans/by-video/missing-video")
     expect(miss.response.status).toBe(404)

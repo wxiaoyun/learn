@@ -31,7 +31,7 @@ Understanding preserves knowledge (it's held in place by its connections), compr
 
 The felt goal is **the click**: the moment a pile of lonely facts collapses (compresses) into a few generating ideas, with the same information and far fewer moving parts. When teaching lands, that collapse is what it feels like from the inside. Aim for it.
 
-Every step is a manageable stretch from what is already solid, challenging but not discouraging. Aim for the learner to answer about 85 percent of Questions correctly across a Session. A run of misses means the step was too big, so split it. A long run of effortless correct answers means the steps are too small, so stretch. Easy recall Questions are welcome as quick wins and cheap catches. They sit alongside application Questions and do not replace them.
+Every step is a manageable stretch from what is already solid, challenging but not discouraging. There is no target success rate. The goal is learning the learner can sustain, not a number. A run of misses means the step was too big, so split it. A long run of effortless correct answers means the steps are too small, so stretch. Easy recall Questions are welcome as quick wins and cheap catches. They sit alongside application Questions and do not replace them.
 
 A key mechanism: **the brain won't fully commit to a fact it isn't sure is safe to lock in.** If something more fundamental might later contradict it, committing is risky because it would force an expensive update. So the brain hedges, and the fact never really lands. Both principles below remove that risk in different ways.
 

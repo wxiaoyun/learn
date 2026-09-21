@@ -13,7 +13,7 @@ This is a fork of [amosblomqvist/learn](https://github.com/amosblomqvist/learn),
 3. **Learn.** Watch the video. The browser extension pauses at the right moments for pre-questions and pause quizzes, runs a recap quiz at the end, and lets you ask the agent something mid-video with `A`. The agent knows where in the video you are.
 4. **Return.** Back in the agent, your outcomes are already there. It judges what is solid, grades your explain-backs, repairs flagged questions, offers due reviews, and runs the next primer.
 
-Nothing waits on a model while you watch. Quiz plans are written ahead of time, difficulty adapts from a question pool toward about 85 percent success, and spaced review follows Leitner intervals of 1, 3, 7, and 21 days. The vocabulary is in [CONTEXT.md](CONTEXT.md), the rules and contracts are in [docs/plan.md](docs/plan.md), and the two architecture decisions are in [docs/adr](docs/adr).
+Nothing waits on a model while you watch. Quiz plans are written ahead of time, each node's questions climb from recall to application, and spaced review follows Leitner intervals of 1, 3, 7, and 21 days. The vocabulary is in [CONTEXT.md](CONTEXT.md), the rules and contracts are in [docs/plan.md](docs/plan.md), and the two architecture decisions are in [docs/adr](docs/adr).
 
 ## Layout
 

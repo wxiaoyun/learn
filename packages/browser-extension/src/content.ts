@@ -1,4 +1,4 @@
-import { parseQuizPlan, placementKey, selectQuestions, type Answer, type Ask, type AskInput, type ChoiceQuestion, type ClientLogLine, type GradedResult, type OutcomeInput, type Question, type QuizPlan } from "@learn/core"
+import { parseQuizPlan, placementKey, placementQuestions, type Answer, type Ask, type AskInput, type ChoiceQuestion, type ClientLogLine, type OutcomeInput, type Question, type QuizPlan } from "@learn/core"
 import katex from "katex"
 import { askPollDecision, formatVideoTime, learningKeyDecision, type LearningKeyAction } from "./ask-core"
 import { completedPlacementKeys, gradeToast, landedNodeIds, playbackStep, recapQuestionIds, timedPlacements, type PlacementOutcome } from "./playback-core"
@@ -12,7 +12,6 @@ type PlanReply = {
   answeredPlacementKeys: string[]
   correctQuestionIds: string[]
   wrongQuestionIds: string[]
-  recentGradedResults: GradedResult[]
 }
 type QueuedQuestion = { id: string; placementIndex: number; placementKey: string; recap: boolean }
 type GradeReply = { judgment: "understood" | "partial" | "not-understood"; missing: string }
@@ -144,9 +143,6 @@ function decodePlan(data: unknown): PlanReply | undefined {
     correctQuestionIds,
     wrongQuestionIds: Array.isArray(value.wrongQuestionIds)
       ? value.wrongQuestionIds.filter((id): id is string => typeof id === "string")
-      : [],
-    recentGradedResults: Array.isArray(value.recentGradedResults)
-      ? value.recentGradedResults.filter((result): result is GradedResult => result === "correct" || result === "wrong")
       : [],
   }
 }
@@ -409,7 +405,6 @@ class Session {
   private readonly sessionOutcomes: PlacementOutcome[] = []
   private readonly correct: Set<string>
   private readonly missed: Set<string>
-  private readonly gradedResults: GradedResult[] = []
   private previousTime: number
   private seeking = false
   private seekPassed = new Map<number, number>()
@@ -588,12 +583,7 @@ class Session {
   private openPlacement(index: number): void {
     const placement = this.reply.plan.placements[index]
     if (!placement || placement.kind === "recap") return
-    const questions = selectQuestions({
-      placement,
-      questionPool: this.reply.plan.questionPool,
-      answeredQuestionIds: this.answered,
-      recentGradedResults: [...this.reply.recentGradedResults, ...this.gradedResults],
-    })
+    const questions = placementQuestions(placement, this.reply.plan.questionPool)
     const key = placementKey(placement)
     this.openQuestions(questions
       .map((question) => ({ id: question.id, placementIndex: index, placementKey: key, recap: false })))
@@ -787,7 +777,6 @@ class Session {
     if (!key) return
     this.sessionOutcomes.push({ placementKey: key, questionId: question.id, status })
     if (status !== "skipped") this.answered.add(question.id)
-    if (status === "correct" || status === "wrong") this.gradedResults.push(status)
     if (status === "correct") {
       this.correct.add(question.id)
       this.missed.delete(question.id)

@@ -570,7 +570,6 @@ export type LogFields = {
   [key: string]: unknown
 }
 
-export type GradedResult = "correct" | "wrong"
 export type ReviewState = {
   nodeId: string
   box: 1 | 2 | 3 | 4
@@ -590,50 +589,11 @@ export function placementKey(placement: Placement): string {
     : `${placement.kind}:page:${location.page}`
 }
 
-export function selectQuestions(input: {
-  placement: Placement
-  questionPool: readonly Question[]
-  answeredQuestionIds: ReadonlySet<string>
-  recentGradedResults: readonly GradedResult[]
-}): ChoiceQuestion[] {
-  const authoredIds = input.placement.kind === "pre-question"
-    ? [input.placement.questionId]
-    : input.placement.questionIds
-  if (input.placement.kind === "recap") {
-    return authoredIds.flatMap((id) => {
-      const question = input.questionPool.find((candidate) => candidate.id === id)
-      return question?.kind === "choice" ? [question] : []
-    })
-  }
-
-  const recent = input.recentGradedResults.slice(-10)
-  const rate = recent.filter((result) => result === "correct").length / recent.length
-  const preferredTier = recent.length < 5
-    ? undefined
-    : rate < 0.75
-      ? "recall"
-      : rate > 0.9
-        ? "application"
-        : undefined
-  const used = new Set<string>()
-
+export function placementQuestions(placement: Placement, questionPool: readonly Question[]): ChoiceQuestion[] {
+  const authoredIds = placement.kind === "pre-question" ? [placement.questionId] : placement.questionIds
   return authoredIds.flatMap((id) => {
-    const authored = input.questionPool.find((candidate): candidate is ChoiceQuestion =>
-      candidate.id === id && candidate.kind === "choice")
-    if (!authored) return []
-    const wantedTier = preferredTier ?? authored.tier
-    const candidates = input.questionPool.filter((candidate): candidate is ChoiceQuestion =>
-      candidate.kind === "choice"
-      && candidate.nodeId === authored.nodeId
-      && candidate.tier === wantedTier
-      && !used.has(candidate.id))
-    const selected = authored.tier === wantedTier
-      && !input.answeredQuestionIds.has(authored.id)
-      && !used.has(authored.id)
-      ? authored
-      : candidates.find((candidate) => !input.answeredQuestionIds.has(candidate.id)) ?? authored
-    used.add(selected.id)
-    return [selected]
+    const question = questionPool.find((candidate) => candidate.id === id)
+    return question?.kind === "choice" ? [question] : []
   })
 }
 

@@ -657,12 +657,6 @@ function makeStore(root: string, turns: AgentTurns): LearningStoreService {
         }
         const plan = yield* decodeFile("decode_quiz_plan", file, () => parseQuizPlan(text, file))
         const outcomes = yield* getOutcomes(roadmap.courseId)
-        const recentGradedResults = outcomes
-          .filter((record): record is Outcome => record.type === "outcome"
-            && (record.status === "correct" || record.status === "wrong"))
-          .sort((left, right) => Date.parse(left.answeredAt) - Date.parse(right.answeredAt))
-          .slice(-10)
-          .map((outcome) => outcome.status as "correct" | "wrong")
         const unitOutcomes = outcomes.filter((record): record is Outcome =>
           record.type === "outcome" && record.unitId === unit.id)
         const answeredPlacementKeys = plan.placements.flatMap((placement) => {
@@ -702,7 +696,6 @@ function makeStore(root: string, turns: AgentTurns): LearningStoreService {
           answeredPlacementKeys,
           correctQuestionIds,
           wrongQuestionIds,
-          recentGradedResults,
         }
       }
       return yield* new NotFoundError({
