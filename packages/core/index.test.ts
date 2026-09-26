@@ -57,7 +57,7 @@ const nodes: Nodes = [
     title: "Core node",
     summary: "A core node supports the rest.",
     dependsOn: [],
-    taughtAt: [{ unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 12 } }],
+    taughtAt: [{ unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 120 } }],
   },
 ]
 
@@ -96,7 +96,7 @@ const quizPlan: QuizPlan = {
     { kind: "pre-question", questionId: "question-1" },
     {
       kind: "pause",
-      location: { unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 12 } },
+      location: { unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 120 } },
       nodeIds: ["core-node"],
       questionIds: ["question-2", "question-3"],
     },
@@ -174,6 +174,21 @@ describe("state validation", () => {
     const result = parseQuizPlan(JSON.stringify(invalid))
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toContain("must match unitId")
+  })
+
+  test("rejects video placements that crowd the previous one", () => {
+    const placement = quizPlan.placements[0]
+    if (placement?.kind !== "pre-question") throw new Error("fixture needs a pre-question")
+    const crowded = {
+      ...quizPlan,
+      placements: [
+        { ...placement, location: { unitId: quizPlan.unitId, anchor: { kind: "video-timestamp", seconds: 118 } } },
+        ...quizPlan.placements.slice(1),
+      ],
+    }
+    const result = parseQuizPlan(JSON.stringify(crowded))
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error).toContain("at least 30 seconds after the previous placement")
   })
 
   test("rejects more than one recap quiz", () => {

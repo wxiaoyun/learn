@@ -198,13 +198,13 @@ describe("HTTP boundaries", () => {
         },
         {
           kind: "pause",
-          location: { unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 20 } },
+          location: { unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 40 } },
           nodeIds: ["core-node"],
           questionIds: ["question-3"],
         },
         {
           kind: "pause",
-          location: { unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 30 } },
+          location: { unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 70 } },
           nodeIds: ["core-node"],
           questionIds: ["question-5", "question-6"],
         },
@@ -220,7 +220,7 @@ describe("HTTP boundaries", () => {
     const inputs = [
       { questionId: "replacement-one", status: "correct", placementKey: "pause:10" },
       { questionId: "replacement-two", status: "flagged", placementKey: "pause:10" },
-      { questionId: "replacement-three", status: "skipped", placementKey: "pause:20" },
+      { questionId: "replacement-three", status: "skipped", placementKey: "pause:40" },
       { questionId: "question-5", status: "correct" },
       { questionId: "question-6", status: "correct" },
     ] as const
@@ -244,7 +244,7 @@ describe("HTTP boundaries", () => {
 
     const result = await request("/quiz-plans/by-video/placement-video")
     expect(result.response.status).toBe(200)
-    expect(result.body.answeredPlacementKeys).toEqual(["pause:10", "pause:30"])
+    expect(result.body.answeredPlacementKeys).toEqual(["pause:10", "pause:70"])
   })
 
   test("appends an outcome once and skips its duplicate", async () => {

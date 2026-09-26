@@ -214,6 +214,8 @@ export const PlacementSchema = Schema.Union([
   RecapPlacementSchema,
 ])
 
+export const MIN_PLACEMENT_GAP_SECONDS = 30
+
 export const QuizPlanSchema = Schema.Struct({
   courseId: SlugSchema,
   unitId: SlugSchema,
@@ -264,6 +266,23 @@ export const QuizPlanSchema = Schema.Struct({
     if (recapCount > 1) {
       issues.push({ path: ["placements"], issue: "must contain at most one recap quiz" })
     }
+
+    const videoPlacements = plan.placements.flatMap((placement, index) => {
+      if (placement.kind === "recap") return []
+      const anchor = placement.location?.anchor
+      if (!anchor || anchor.kind !== "video-timestamp") return []
+      return [{ index, seconds: anchor.seconds }]
+    })
+    videoPlacements.forEach((placement, position) => {
+      const previous = videoPlacements[position - 1]
+      if (!previous) return
+      if (placement.seconds - previous.seconds < MIN_PLACEMENT_GAP_SECONDS) {
+        issues.push({
+          path: ["placements", placement.index, "location", "anchor", "seconds"],
+          issue: `must run in ascending order and at least ${MIN_PLACEMENT_GAP_SECONDS} seconds after the previous placement at ${previous.seconds}`,
+        })
+      }
+    })
 
     plan.placements.forEach((placement, index) => {
       const path = ["placements", index] as const
