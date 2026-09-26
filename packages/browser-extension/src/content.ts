@@ -414,6 +414,7 @@ class Session {
   private queue: QueuedQuestion[] = []
   private queueIndex = 0
   private selectedIndex?: number
+  private preQuestion = false
   private enterAction?: () => void
   private skipAction?: () => void
   private destroyed = false
@@ -623,9 +624,14 @@ class Session {
     dialog.setAttribute("aria-modal", "true")
     dialog.setAttribute("aria-labelledby", "learning-question-title")
     dialog.setAttribute("aria-describedby", "learning-question-prompt")
+    const placement = this.reply.plan.placements[current.placementIndex]
+    this.preQuestion = !current.recap && placement?.kind === "pre-question"
     const title = document.createElement("h2")
     title.id = "learning-question-title"
-    title.textContent = current.recap ? "Recap quiz" : "Question"
+    title.textContent = current.recap ? "Recap quiz" : this.preQuestion ? "Pre-question" : "Question"
+    const lead = document.createElement("p")
+    lead.className = "hint"
+    lead.textContent = "The lecture has not covered this yet. Guess, then listen for the answer."
     const prompt = document.createElement("div")
     prompt.id = "learning-question-prompt"
     prompt.className = "prompt"
@@ -639,7 +645,7 @@ class Session {
     })
     const skip = this.button("Skip", () => this.skipAction?.())
     actions.append(flag, skip)
-    dialog.append(title, prompt, body, actions)
+    dialog.append(title, ...(this.preQuestion ? [lead] : []), prompt, body, actions)
     backdrop.append(dialog)
     this.root.append(backdrop)
     this.overlay = backdrop
@@ -666,7 +672,10 @@ class Session {
       const correct = this.selectedIndex === question.correctIndex
       this.record(question, correct ? "correct" : "wrong", this.selectedIndex)
       if (!correct) this.missed.add(question.id)
-      this.showFeedback(question, correct ? "Right" : "Wrong", !correct, true)
+      // A miss on a Pre-question means the lecture has not taught it yet, so it reads as "Not yet"
+      // and skips the Rewatch action, which would seek back into the previous topic.
+      const label = correct ? "Right" : this.preQuestion ? "Not yet" : "Wrong"
+      this.showFeedback(question, label, !correct && !this.preQuestion, true)
     }, "primary")
     confirm.disabled = true
     const select = (index: number): void => {
