@@ -463,7 +463,9 @@ describe("server-started agent turns", () => {
   })
 
   test("kills timed out turns and logs timeout", async () => {
-    const value = await fixture({ mode: "noop", sleepMs: 500, timeoutMs: 150 })
+    // The timeout must outlast the stub's cold start, which can pass 250 ms, or
+    // the kill lands before the stub records its start event.
+    const value = await fixture({ mode: "noop", sleepMs: 2_000, timeoutMs: 1_000 })
     await writeCourse(value.root, "timeout-course")
     await value.postOutcome(explain("timeout-course", "youtube", "2026-03-21T10:00:00.000Z"))
     await waitFor(async () => {
