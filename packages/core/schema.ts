@@ -267,23 +267,6 @@ export const QuizPlanSchema = Schema.Struct({
       issues.push({ path: ["placements"], issue: "must contain at most one recap quiz" })
     }
 
-    const videoPlacements = plan.placements.flatMap((placement, index) => {
-      if (placement.kind === "recap") return []
-      const anchor = placement.location?.anchor
-      if (!anchor || anchor.kind !== "video-timestamp") return []
-      return [{ index, seconds: anchor.seconds }]
-    })
-    videoPlacements.forEach((placement, position) => {
-      const previous = videoPlacements[position - 1]
-      if (!previous) return
-      if (placement.seconds - previous.seconds < MIN_PLACEMENT_GAP_SECONDS) {
-        issues.push({
-          path: ["placements", placement.index, "location", "anchor", "seconds"],
-          issue: `must run in ascending order and at least ${MIN_PLACEMENT_GAP_SECONDS} seconds after the previous placement at ${previous.seconds}`,
-        })
-      }
-    })
-
     plan.placements.forEach((placement, index) => {
       const path = ["placements", index] as const
       if (placement.kind === "pre-question") {
@@ -564,6 +547,27 @@ export type ChoiceQuestion = Schema.Schema.Type<typeof ChoiceQuestionSchema>
 export type ExplainBackQuestion = Schema.Schema.Type<typeof ExplainBackQuestionSchema>
 export type Question = Schema.Schema.Type<typeof QuestionSchema>
 export type Placement = Schema.Schema.Type<typeof PlacementSchema>
+
+/**
+ * Crowded or backwards placements interrupt the lecturer, so `put_quiz_plan` rejects them.
+ * This is an authoring rule rather than a schema check, so a plan stored before the rule
+ * still parses and still serves its quizzes.
+ */
+export function placementGapIssues(plan: QuizPlan): string[] {
+  const videoPlacements = plan.placements.flatMap((placement) => {
+    if (placement.kind === "recap") return []
+    const anchor = placement.location?.anchor
+    if (!anchor || anchor.kind !== "video-timestamp") return []
+    return [anchor.seconds]
+  })
+  return videoPlacements.flatMap((seconds, position) => {
+    const previous = videoPlacements[position - 1]
+    if (previous === undefined || seconds - previous >= MIN_PLACEMENT_GAP_SECONDS) return []
+    return [
+      `placement at ${seconds} must run in ascending order and at least ${MIN_PLACEMENT_GAP_SECONDS} seconds after the previous placement at ${previous}`,
+    ]
+  })
+}
 export type QuizPlan = Schema.Schema.Type<typeof QuizPlanSchema>
 export type AskInput = Schema.Schema.Type<typeof AskInputSchema>
 export type Ask = Schema.Schema.Type<typeof AskSchema>

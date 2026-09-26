@@ -7,6 +7,7 @@ import {
   createGradeId,
   createOutcomeId,
   parseAsks,
+  placementGapIssues,
   NodesSchema,
   QuizPlanSchema,
   RoadmapSchema,
@@ -164,6 +165,10 @@ export const agentTools: ReadonlyArray<AgentToolDefinition> = [
     plan: QuizPlanSchema,
   }, ({ courseId, unitId, plan }) => Effect.gen(function*() {
     const value = yield* parsed(parseQuizPlan(JSON.stringify(plan), "put_quiz_plan"))
+    const gaps = placementGapIssues(value)
+    if (gaps.length > 0) {
+      return yield* new ValidationError({ message: `put_quiz_plan: ${gaps.join("\n")}` })
+    }
     return yield* Effect.flatMap(LearningStore, (store) => store.putQuizPlan(courseId, unitId, value))
   })),
   defineTool("get_outcomes", "Get outcome records for one course, optionally since an ISO timestamp.", {

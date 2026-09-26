@@ -10,6 +10,7 @@ import {
   createOutcomeId,
   parseAsks,
   parseNodes,
+  placementGapIssues,
   parseOutcomes,
   parseQuizPlan,
   parseRoadmap,
@@ -176,19 +177,24 @@ describe("state validation", () => {
     if (!result.ok) expect(result.error).toContain("must match unitId")
   })
 
-  test("rejects video placements that crowd the previous one", () => {
+  test("reports crowded video placements without rejecting the plan", () => {
     const placement = quizPlan.placements[0]
     if (placement?.kind !== "pre-question") throw new Error("fixture needs a pre-question")
     const crowded = {
       ...quizPlan,
       placements: [
-        { ...placement, location: { unitId: quizPlan.unitId, anchor: { kind: "video-timestamp", seconds: 118 } } },
+        {
+          ...placement,
+          location: { unitId: quizPlan.unitId, anchor: { kind: "video-timestamp" as const, seconds: 118 } },
+        },
         ...quizPlan.placements.slice(1),
       ],
     }
-    const result = parseQuizPlan(JSON.stringify(crowded))
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.error).toContain("at least 30 seconds after the previous placement")
+    expect(parseQuizPlan(JSON.stringify(crowded)).ok).toBe(true)
+    expect(placementGapIssues(crowded)).toEqual([
+      "placement at 120 must run in ascending order and at least 30 seconds after the previous placement at 118",
+    ])
+    expect(placementGapIssues(quizPlan)).toEqual([])
   })
 
   test("rejects more than one recap quiz", () => {
