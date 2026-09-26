@@ -264,11 +264,16 @@ export const mcpToolsLayer = Layer.effectDiscard(Effect.gen(function*() {
             structuredContent: { error: error.message },
             content: [{ type: "text", text: error.message }],
           }),
-          onSuccess: (result) => new McpSchema.CallToolResult({
-            isError: false,
-            structuredContent: typeof result === "object" ? result : undefined,
-            content: [{ type: "text", text: JSON.stringify(result) }],
-          }),
+          onSuccess: (result) => {
+            const text = JSON.stringify(result)
+            return new McpSchema.CallToolResult({
+              isError: false,
+              // structuredContent must be a Schema.Json value, which rejects
+              // undefined fields, so round trip through JSON to drop them.
+              structuredContent: typeof result === "object" ? JSON.parse(text) : undefined,
+              content: [{ type: "text", text }],
+            })
+          },
         }),
       ) as any,
     })

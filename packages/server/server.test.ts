@@ -78,6 +78,20 @@ async function mcp(body: unknown, headers: Record<string, string> = {}) {
   })
 }
 
+async function mcpTool(name: string, args: unknown) {
+  const initialized = await mcp({
+    jsonrpc: "2.0",
+    id: 0,
+    method: "initialize",
+    params: { protocolVersion, capabilities: {}, clientInfo: { name: "test", version: "0" } },
+  })
+  expect(initialized.response.status).toBe(200)
+  const session = initialized.response.headers.get("mcp-session-id")!
+  const headers = { "mcp-session-id": session, "mcp-protocol-version": protocolVersion }
+  expect((await mcp({ jsonrpc: "2.0", method: "notifications/initialized" }, headers)).response.status).toBe(202)
+  return mcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }, headers)
+}
+
 async function putTool(name: string, body: unknown) {
   return request(`/tools/${name}`, {
     method: "POST",
@@ -361,39 +375,43 @@ describe("agent tools", () => {
   })
 
   test("rejects caller supplied outcome ids through MCP", async () => {
-    const initialized = await mcp({
-      jsonrpc: "2.0",
-      id: 0,
-      method: "initialize",
-      params: { protocolVersion, capabilities: {}, clientInfo: { name: "test", version: "0" } },
-    })
-    expect(initialized.response.status).toBe(200)
-    const session = initialized.response.headers.get("mcp-session-id")!
-    const headers = { "mcp-session-id": session, "mcp-protocol-version": protocolVersion }
-    expect((await mcp({ jsonrpc: "2.0", method: "notifications/initialized" }, headers)).response.status).toBe(202)
-
-    const result = await mcp({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: {
-        name: "append_outcome",
-        arguments: {
-          outcome: {
-            type: "outcome",
-            id: "caller-id",
-            courseId: "mcp-id-course",
-            questionId: "mcp-question",
-            nodeId: "core-node",
-            surface: "agent",
-            status: "wrong",
-          },
-        },
+    const result = await mcpTool("append_outcome", {
+      outcome: {
+        type: "outcome",
+        id: "caller-id",
+        courseId: "mcp-id-course",
+        questionId: "mcp-question",
+        nodeId: "core-node",
+        surface: "agent",
+        status: "wrong",
       },
-    }, headers)
+    })
     expect(result.response.status).toBe(200)
     expect(result.body.result.isError).toBe(true)
     expect(result.body.result.content[0].text).toContain("Expected no excess property")
+  })
+
+  test("returns course state through MCP when a node has no outcomes", async () => {
+    const course = roadmap("mcp-state-course", "mcp-state-video")
+    const nodes: Nodes = [{
+      id: "core-node",
+      title: "Core node",
+      summary: "A core node supports the rest.",
+      dependsOn: [],
+      taughtAt: [{ unitId: "first-unit", anchor: { kind: "video-timestamp", seconds: 1 } }],
+    }]
+    for (const [file, contents] of [
+      [roadmapPath(root, course.courseId), serializeRoadmap(course)],
+      [join(root, course.courseId, "nodes.json"), serializeNodes(nodes)],
+    ] as const) {
+      await mkdir(dirname(file), { recursive: true })
+      await writeFile(file, contents, "utf8")
+    }
+    const result = await mcpTool("get_course_state", { courseId: course.courseId })
+    expect(result.response.status).toBe(200)
+    expect(result.body.error).toBeUndefined()
+    expect(result.body.result.isError).toBe(false)
+    expect(result.body.result.structuredContent.nodeSummaries[0].nodeId).toBe("core-node")
   })
 
   test("computes ids and returns newly appended Grades during incremental ingest", async () => {
