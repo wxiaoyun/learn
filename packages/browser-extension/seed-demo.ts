@@ -1,6 +1,6 @@
 export {}
 
-const server = process.env.LEARNING_SERVER?.replace(/\/$/, "") ?? "http://127.0.0.1:4517"
+const server = process.env.LEARNING_SERVER?.replace(/\/$/, "") ?? `http://127.0.0.1:${process.env.LEARNING_PORT?.trim() || "4517"}`
 const courseId = "demo-youtube-arithmetic"
 const unitId = "me-at-zoo-arithmetic"
 const videoId = "jNQXAC9IVRw"

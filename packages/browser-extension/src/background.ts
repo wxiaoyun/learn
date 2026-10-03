@@ -1,6 +1,8 @@
 import type { AskInput, ClientLogLine, OutcomeInput } from "@learn/core"
 
-const SERVER = "http://127.0.0.1:4517"
+// build.ts fills in LEARNING_PORT, default 4517.
+declare const LEARNING_PORT: string
+const SERVER = `http://127.0.0.1:${LEARNING_PORT}`
 const LOG_KEY = "learningLogs"
 const MAX_LOGS = 400
 

@@ -3,6 +3,7 @@ import { join } from "node:path"
 
 const root = import.meta.dir
 const dist = join(root, "dist")
+const port = process.env.LEARNING_PORT?.trim() || "4517"
 
 await rm(dist, { recursive: true, force: true })
 await mkdir(dist, { recursive: true })
@@ -20,6 +21,7 @@ const result = await Bun.build({
   format: "iife",
   minify: true,
   naming: "[dir]/[name].[ext]",
+  define: { LEARNING_PORT: JSON.stringify(port) },
 })
 if (!result.success) {
   for (const log of result.logs) console.error(log)
@@ -36,8 +38,11 @@ for (const output of result.outputs) {
   if (escaped !== text) await Bun.write(output.path, escaped)
 }
 
+const manifest = await Bun.file(join(root, "manifest.json")).json()
+manifest.host_permissions = [`http://127.0.0.1:${port}/*`]
+
 await Promise.all([
-  cp(join(root, "manifest.json"), join(dist, "manifest.json")),
+  Bun.write(join(dist, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`),
   cp(join(root, "popup.html"), join(dist, "popup.html")),
   cp(join(root, "review.html"), join(dist, "review.html")),
   cp(join(root, "node_modules/katex/dist/katex.min.css"), join(dist, "katex.min.css")),

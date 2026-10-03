@@ -55,7 +55,7 @@ To keep it running across logins on macOS, `mise run service:install` builds the
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `LEARNING_ROOT` | `~/learning` | Where courses are stored |
-| `LEARNING_PORT` | `4517` | Port on `127.0.0.1` |
+| `LEARNING_PORT` | `4517` | Port on `127.0.0.1`. The Claude Code plugin and pi read it at launch, and the browser extension at build time, so rebuild the extension after changing it |
 | `LEARNING_ALLOWED_ORIGINS` | the browser extension | Comma separated origins allowed to call the server. The extension's ID is fixed by the key in its manifest, so the default already allows it |
 | `LEARNING_AGENT` | `claude` | Driver for agent turns the server starts: `claude`, `pi`, or `off` |
 
