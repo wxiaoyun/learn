@@ -46,10 +46,24 @@ description = "Compile the learning server into a single binary"
 run = "bun run --cwd packages/server build"
 
 [tasks."service:install"]
-description = "Build the learning server binary, then install and load it as a launchd agent (macOS)"
+description = "Build the learning server binary, then install and load it as a launchd agent (macOS), restarting a running one"
+alias = "restart"
 depends = ["build"]
 run = "bun run packages/server/service.ts install"
 
 [tasks."service:uninstall"]
 description = "Unload and remove the learning server launchd agent"
 run = "bun run packages/server/service.ts uninstall"
+
+[tasks."plugin:reinstall"]
+description = "Reinstall the Claude Code plugin in the learning directory so it picks up local edits without a version bump"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Local scope belongs to the learning directory, see setup.
+cd "${LEARNING_ROOT:-$HOME/learning}"
+claude plugin uninstall learning@learning --scope local
+claude plugin install learning@learning --scope local
+echo "restart Claude Code sessions in $PWD to load it"
+"""
