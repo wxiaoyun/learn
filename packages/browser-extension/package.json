@@ -11,12 +11,11 @@
   },
   "dependencies": {
     "@learn/core": "workspace:*",
-    "katex": "^0.16.22"
+    "katex": "^0.19.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/chrome": "^0.1.32",
-    "@types/katex": "^0.16.8",
-    "typescript": "^5.9.0"
+    "@types/chrome": "^0.3.4",
+    "typescript": "^7.0.2"
   }
 }

@@ -1,4 +1,4 @@
-import { McpSchema, McpServer } from "effect/unstable/ai"
+import { McpSchema, McpServer } from "effect/ai"
 import {
   AgentOutcomeInputSchema,
   GradeOutcomeInputSchema,

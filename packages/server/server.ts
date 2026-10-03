@@ -40,13 +40,13 @@ import {
   roadmapPath,
 } from "@learn/core/node"
 import { BunHttpServer } from "@effect/platform-bun"
-import { McpProtocol, McpServer } from "effect/unstable/ai"
+import { McpProtocol, McpServer } from "effect/ai"
 import {
   HttpRouter,
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http"
+} from "effect/http"
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import {

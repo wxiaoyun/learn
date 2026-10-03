@@ -14,12 +14,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.0.0-rc.117",
+    "@effect/platform-bun": "4.0.0",
     "@learn/core": "workspace:*",
-    "effect": "4.0.0-rc.117"
+    "effect": "4.0.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "typescript": "^5.9.0"
+    "typescript": "^7.0.2"
   }
 }
