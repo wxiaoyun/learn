@@ -778,7 +778,7 @@ export function log(level: LogLevel, stage: string, fields: LogFields = {}): voi
 
 const decodeOptions = { errors: "all", onExcessProperty: "error" } as const
 
-function decode<S extends Schema.Codec<any, any>>(
+export function decode<S extends Schema.Codec<any, any>>(
   schema: S,
   input: unknown,
   file: string,
@@ -847,9 +847,16 @@ export function serializeQuizPlan(plan: QuizPlan): string {
   return serializeJson(plan, "quiz-plan.json", QuizPlanSchema)
 }
 
-export function parseOutcomes(text: string, file = "outcomes.jsonl"): PlainParseResult<OutcomeRecord[]> {
-  log("info", "parse_outcomes", { target: file, status: "start" })
-  const records: OutcomeRecord[] = []
+// A bad line is logged and skipped, not fatal, so one hand edit or torn write
+// cannot block every read and append for its Course. The line stays on disk.
+function parseJsonl<S extends Schema.Codec<any, any>>(
+  text: string,
+  file: string,
+  schema: S,
+  stage: string,
+): PlainParseResult<Schema.Schema.Type<S>[]> {
+  log("info", stage, { target: file, status: "start" })
+  const records: Schema.Schema.Type<S>[] = []
   for (const [index, line] of text.split(/\r?\n/).entries()) {
     if (!line.trim()) continue
     let input: unknown
@@ -857,18 +864,22 @@ export function parseOutcomes(text: string, file = "outcomes.jsonl"): PlainParse
       input = JSON.parse(line)
     } catch (error) {
       const message = `${file}:${index + 1}: root: invalid JSON: ${error instanceof Error ? error.message : String(error)}`
-      log("error", "parse_outcomes", { target: file, status: "failed", error: message })
-      return { ok: false, error: message }
+      log("error", stage, { target: file, status: "skipped", error: message })
+      continue
     }
-    const decoded = decode(OutcomeRecordSchema, input, `${file}:${index + 1}`)
+    const decoded = decode(schema, input, `${file}:${index + 1}`)
     if (!decoded.ok) {
-      log("error", "parse_outcomes", { target: file, status: "failed", error: decoded.error })
-      return decoded
+      log("error", stage, { target: file, status: "skipped", error: decoded.error })
+      continue
     }
     records.push(decoded.value)
   }
-  log("info", "parse_outcomes", { target: file, status: "ok" })
+  log("info", stage, { target: file, status: "ok" })
   return { ok: true, value: records }
+}
+
+export function parseOutcomes(text: string, file = "outcomes.jsonl"): PlainParseResult<OutcomeRecord[]> {
+  return parseJsonl(text, file, OutcomeRecordSchema, "parse_outcomes")
 }
 
 export function serializeOutcome(outcome: OutcomeRecord): string {
@@ -878,27 +889,7 @@ export function serializeOutcome(outcome: OutcomeRecord): string {
 }
 
 export function parseAsks(text: string, file = "asks.jsonl"): PlainParseResult<AskRecord[]> {
-  log("info", "parse_asks", { target: file, status: "start" })
-  const records: AskRecord[] = []
-  for (const [index, line] of text.split(/\r?\n/).entries()) {
-    if (!line.trim()) continue
-    let input: unknown
-    try {
-      input = JSON.parse(line)
-    } catch (error) {
-      const message = `${file}:${index + 1}: root: invalid JSON: ${error instanceof Error ? error.message : String(error)}`
-      log("error", "parse_asks", { target: file, status: "failed", error: message })
-      return { ok: false, error: message }
-    }
-    const decoded = decode(AskRecordSchema, input, `${file}:${index + 1}`)
-    if (!decoded.ok) {
-      log("error", "parse_asks", { target: file, status: "failed", error: decoded.error })
-      return decoded
-    }
-    records.push(decoded.value)
-  }
-  log("info", "parse_asks", { target: file, status: "ok" })
-  return { ok: true, value: records }
+  return parseJsonl(text, file, AskRecordSchema, "parse_asks")
 }
 
 export function serializeAsk(record: AskRecord): string {

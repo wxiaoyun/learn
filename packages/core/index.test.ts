@@ -1,13 +1,15 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { appendAsk, appendOutcome } from "./node"
 import {
+  OutcomeRecordSchema,
   createAnswerId,
   createAskId,
   createGradeId,
   createOutcomeId,
+  decode,
   parseAsks,
   parseNodes,
   placementGapIssues,
@@ -233,7 +235,7 @@ describe("state validation", () => {
       answeredAt,
       id: createOutcomeId({ ...outcome, answeredAt }),
     }
-    const result = parseOutcomes(`${JSON.stringify(invalid)}\n`)
+    const result = decode(OutcomeRecordSchema, invalid, "outcomes.jsonl")
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error).toContain("valid ISO date-time")
   })
@@ -302,5 +304,16 @@ describe("outcome identity and append", () => {
     expect(await appendOutcome(file, outcome)).toBe("appended")
     expect(await appendOutcome(file, outcome)).toBe("duplicate")
     expect((await readFile(file, "utf8")).trim().split("\n")).toHaveLength(1)
+  })
+
+  test("skips a malformed line and appends after a torn write", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "learn-core-"))
+    tempPaths.push(directory)
+    const file = join(directory, "outcomes.jsonl")
+    await writeFile(file, `${serializeOutcome(outcome)}{"type":"outc`)
+    const answeredAt = "2026-03-19T10:01:00.000Z"
+    const next = { ...outcome, answeredAt, id: createOutcomeId({ ...outcome, answeredAt }) }
+    expect(await appendOutcome(file, next)).toBe("appended")
+    expect(value(parseOutcomes(await readFile(file, "utf8")))).toEqual([outcome, next])
   })
 })

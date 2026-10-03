@@ -6,13 +6,14 @@ import {
   createAnswerId,
   createGradeId,
   createOutcomeId,
-  parseAsks,
+  AskRecordSchema,
   placementGapIssues,
   NodesSchema,
   QuizPlanSchema,
   RoadmapSchema,
   parseNodes,
-  parseOutcomes,
+  OutcomeRecordSchema,
+  decode,
   parseQuizPlan,
   parseRoadmap,
   type Answer,
@@ -184,8 +185,8 @@ export const agentTools: ReadonlyArray<AgentToolDefinition> = [
       answeredAt,
       id: createOutcomeId({ questionId: outcome.questionId, surface: outcome.surface, answeredAt }),
     }
-    const records = yield* parsed(parseOutcomes(`${JSON.stringify(record)}\n`, "append_outcome"))
-    return yield* Effect.flatMap(LearningStore, (store) => store.appendOutcome(records[0] as Outcome))
+    const checked = yield* parsed(decode(OutcomeRecordSchema, record, "append_outcome"))
+    return yield* Effect.flatMap(LearningStore, (store) => store.appendOutcome(checked as Outcome))
   })),
   defineTool("answer_ask", "Append one Answer to an Ask. The server supplies ids and time.", {
     courseId: SlugSchema,
@@ -201,8 +202,8 @@ export const agentTools: ReadonlyArray<AgentToolDefinition> = [
       nodeIds,
       answeredAt: new Date().toISOString(),
     }
-    const records = yield* parsed(parseAsks(`${JSON.stringify(record)}\n`, "answer_ask"))
-    return yield* Effect.flatMap(LearningStore, (store) => store.appendAnswer(courseId, records[0] as Answer))
+    const checked = yield* parsed(decode(AskRecordSchema, record, "answer_ask"))
+    return yield* Effect.flatMap(LearningStore, (store) => store.appendAnswer(courseId, checked as Answer))
   })),
   defineTool("append_grade", "Append one explain-back grade. The server supplies its deterministic id.", {
     courseId: SlugSchema,
@@ -213,8 +214,8 @@ export const agentTools: ReadonlyArray<AgentToolDefinition> = [
       id: createGradeId(grade.outcomeId),
       gradedAt: new Date().toISOString(),
     }
-    const records = yield* parsed(parseOutcomes(`${JSON.stringify(record)}\n`, "append_grade"))
-    return yield* Effect.flatMap(LearningStore, (store) => store.appendGrade(courseId, records[0] as GradeOutcome))
+    const checked = yield* parsed(decode(OutcomeRecordSchema, record, "append_grade"))
+    return yield* Effect.flatMap(LearningStore, (store) => store.appendGrade(courseId, checked as GradeOutcome))
   })),
 ]
 

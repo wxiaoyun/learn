@@ -37,7 +37,10 @@ async function appendRecord<T extends { readonly id: string }>(input: {
       return "duplicate"
     }
     await mkdir(dirname(input.file), { recursive: true })
-    await appendFile(input.file, serialized, "utf8")
+    // Start on a fresh line if the file ends in a torn write, or the new record
+    // would fuse with it and be skipped on read.
+    const separator = existing && !existing.endsWith("\n") ? "\n" : ""
+    await appendFile(input.file, separator + serialized, "utf8")
     log("info", input.stage, { target: input.file, status: "appended" })
     return "appended"
   } catch (error) {
