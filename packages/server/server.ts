@@ -50,7 +50,9 @@ import {
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import {
+  Cause,
   Effect,
+  Exit,
   Fiber,
   Layer,
   Schema,
@@ -977,6 +979,11 @@ export async function startServer(
     listening.resolve(port)
   })) as Effect.Effect<never, unknown, never>
   const fiber = Effect.runFork(program)
+  // A layer that fails to build, such as a port already in use, ends the fiber
+  // without calling back, so surface its cause instead of waiting out the timeout.
+  fiber.addObserver((exit) => {
+    if (Exit.isFailure(exit)) listening.reject(new Error(`learning server failed to start: ${Cause.pretty(exit.cause)}`))
+  })
   const port = await Promise.race([listening.promise, Bun.sleep(5_000).then(() => undefined)])
   if (port === undefined) {
     await Effect.runPromise(Fiber.interrupt(fiber))

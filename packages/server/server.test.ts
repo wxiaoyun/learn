@@ -119,6 +119,18 @@ afterAll(async () => {
 })
 
 describe("HTTP boundaries", () => {
+  test("reports a port already in use instead of timing out", async () => {
+    const second = startServer({
+      root,
+      port: running.port,
+      allowedOrigins: [],
+      agent: "off",
+      agentTimeoutMs: 300_000,
+      recapDebounceMs: 20_000,
+    })
+    await expect(second).rejects.toThrow("in use")
+  })
+
   test("rejects an unknown origin and allows a configured origin", async () => {
     const rejected = await request("/health", { headers: { origin: "https://evil.example" } })
     expect(rejected.response.status).toBe(403)
